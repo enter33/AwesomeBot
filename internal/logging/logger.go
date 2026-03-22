@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 const maxLogFiles = 20

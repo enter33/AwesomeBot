@@ -25,7 +25,7 @@
 ### 方式一：源码编译
 
 ```bash
-git clone https://github.com/awesome/awesomebot.git
+git clone https://github.com/enter33/AwesomeBot.git
 cd awesomebot
 go build -o awesome ./cmd/awesome/
 ```

@@ -8,8 +8,8 @@ import (
 
 	"github.com/openai/openai-go/v3"
 
-	"github.com/awesome/awesomebot/pkg/config"
-	"github.com/awesome/awesomebot/pkg/llm"
+	"github.com/enter33/AwesomeBot/pkg/config"
+	"github.com/enter33/AwesomeBot/pkg/llm"
 )
 
 type LLMMemoryUpdater struct {

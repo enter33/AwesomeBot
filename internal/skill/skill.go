@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 // Skill 技能数据结构

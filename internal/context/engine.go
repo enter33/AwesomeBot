@@ -8,9 +8,9 @@ import (
 
 	"github.com/openai/openai-go/v3"
 
-	"github.com/awesome/awesomebot/internal/memory"
-	"github.com/awesome/awesomebot/internal/skill"
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/internal/memory"
+	"github.com/enter33/AwesomeBot/internal/skill"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 type messageWrap struct {

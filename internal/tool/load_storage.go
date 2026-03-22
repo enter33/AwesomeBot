@@ -7,7 +7,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 
-	"github.com/awesome/awesomebot/internal/storage"
+	"github.com/enter33/AwesomeBot/internal/storage"
 )
 
 type LoadStorageTool struct {

@@ -9,7 +9,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 
-	"github.com/awesome/awesomebot/internal/skill"
+	"github.com/enter33/AwesomeBot/internal/skill"
 )
 
 // LoadSkillTool 加载完整技能内容到对话中

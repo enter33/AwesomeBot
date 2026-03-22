@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/awesome/awesomebot/internal/storage"
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/internal/storage"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 type Memory interface {

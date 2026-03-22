@@ -12,8 +12,8 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 
-	"github.com/awesome/awesomebot/internal/tool"
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/internal/tool"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 type Client struct {

@@ -8,11 +8,11 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 
-	ctxengine "github.com/awesome/awesomebot/internal/context"
-	"github.com/awesome/awesomebot/internal/logging"
-	"github.com/awesome/awesomebot/internal/mcp"
-	"github.com/awesome/awesomebot/internal/tool"
-	"github.com/awesome/awesomebot/pkg/config"
+	ctxengine "github.com/enter33/AwesomeBot/internal/context"
+	"github.com/enter33/AwesomeBot/internal/logging"
+	"github.com/enter33/AwesomeBot/internal/mcp"
+	"github.com/enter33/AwesomeBot/internal/tool"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 type ToolConfirmConfig struct {

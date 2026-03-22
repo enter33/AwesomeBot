@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/pkg/config"
 	"gopkg.in/yaml.v3"
 )
 

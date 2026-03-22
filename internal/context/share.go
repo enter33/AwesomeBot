@@ -5,7 +5,7 @@ import (
 
 	"github.com/tiktoken-go/tokenizer"
 
-	"github.com/awesome/awesomebot/pkg/config"
+	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 var tokenEnc tokenizer.Codec

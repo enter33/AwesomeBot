@@ -1,4 +1,4 @@
-module github.com/awesome/awesomebot
+module github.com/enter33/AwesomeBot
 
 go 1.25
 

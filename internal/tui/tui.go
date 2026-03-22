@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/awesome/awesomebot/internal/agent"
+	"github.com/enter33/AwesomeBot/internal/agent"
 )
 
 type streamMsg struct {
