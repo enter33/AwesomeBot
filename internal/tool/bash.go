@@ -3,7 +3,9 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/openai/openai-go/v3"
@@ -50,8 +52,14 @@ func (t *BashTool) Execute(ctx context.Context, argumentsInJSON string) (string,
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// Windows: use powershell to interpret the command line (more compatible)
-		cmd = exec.CommandContext(ctx, "powershell", "-Command", p.Command)
+		// Windows: 使用 PowerShell 执行命令，使用完整路径避免 PATH 问题
+		powershellPath := findPowerShell()
+		if powershellPath == "" {
+			return "", exec.ErrNotFound
+		}
+		cmd = exec.CommandContext(ctx, powershellPath, "-NoProfile", "-Command", p.Command)
+		// 继承当前进程的环境变量
+		cmd.Env = os.Environ()
 	} else {
 		// Linux/macOS: use POSIX sh
 		cmd = exec.CommandContext(ctx, "sh", "-c", p.Command)
@@ -68,4 +76,39 @@ func (t *BashTool) Execute(ctx context.Context, argumentsInJSON string) (string,
 		return "", err
 	}
 	return result, nil
+}
+
+// findPowerShell 查找 PowerShell 可执行文件的完整路径
+func findPowerShell() string {
+	// 常见的 PowerShell 安装路径
+	paths := []string{
+		// PowerShell Core (pwsh)
+		`C:\Program Files\PowerShell\7\pwsh.exe`,
+		// Windows PowerShell
+		`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+		// 备用路径
+		`C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`,
+	}
+
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	// 尝试在 PATH 中查找
+	if path, err := exec.LookPath("powershell.exe"); err == nil {
+		if absPath, err := filepath.Abs(path); err == nil {
+			return absPath
+		}
+		return path
+	}
+	if path, err := exec.LookPath("pwsh.exe"); err == nil {
+		if absPath, err := filepath.Abs(path); err == nil {
+			return absPath
+		}
+		return path
+	}
+
+	return ""
 }
