@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 
 	ctxengine "github.com/awesome/awesomebot/internal/context"
 	"github.com/awesome/awesomebot/internal/logging"
@@ -155,7 +156,13 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 
 		logging.Info("========== 调用 LLM ==========")
 		logging.Info("Model: %s", a.model)
-		stream := a.client.Chat.Completions.NewStreaming(ctx, params)
+		stream := a.client.Chat.Completions.NewStreaming(ctx, params,
+			option.WithJSONSet("reasoning_split", true),
+			option.WithJSONSet("stream_options", map[string]any{
+				"include_usage": true,
+				"include_reasoning": true,
+			}),
+		)
 		acc := openai.ChatCompletionAccumulator{}
 		for stream.Next() {
 			chunk := stream.Current()
@@ -168,19 +175,38 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 
 			if len(chunk.Choices) > 0 {
 				deltaRaw := chunk.Choices[0].Delta
-				// 推理模型会返回 reasoning_content（有些模型使用 reasoning 字段）
-				delta := deltaWithReasoning{}
-				_ = json.Unmarshal([]byte(deltaRaw.RawJSON()), &delta)
-				if reasoningContent := delta.ReasoningContent; reasoningContent != "" {
-					viewCh <- MessageVO{
-						Type:             MessageTypeReasoning,
-						ReasoningContent: &reasoningContent,
+				// MiniMax 返回的 reasoning_details 是一个数组，需要单独解析
+				var rawDelta map[string]any
+				if err := json.Unmarshal([]byte(deltaRaw.RawJSON()), &rawDelta); err == nil {
+					// 处理 reasoning_details 数组（MiniMax 格式）
+					if reasoningDetails, ok := rawDelta["reasoning_details"].([]any); ok {
+						for _, detail := range reasoningDetails {
+							if detailMap, ok := detail.(map[string]any); ok {
+								if text, ok := detailMap["text"].(string); ok && text != "" {
+									viewCh <- MessageVO{
+										Type:             MessageTypeReasoning,
+										ReasoningContent: &text,
+									}
+								}
+							}
+						}
 					}
 				}
+				// 解析 content 和 reasoning_content（标准 OpenAI 格式）
+				delta := deltaWithReasoning{}
+				_ = json.Unmarshal([]byte(deltaRaw.RawJSON()), &delta)
+				// 推理内容
+				if delta.ReasoningContent != "" {
+					viewCh <- MessageVO{
+						Type:             MessageTypeReasoning,
+						ReasoningContent: &delta.ReasoningContent,
+					}
+				}
+				// 回答内容（content 直接输出，包括 <think>...</think> 标签作为普通文本）
 				if delta.Content != "" {
 					viewCh <- MessageVO{
 						Type:    MessageTypeContent,
-						Content: &chunk.Choices[0].Delta.Content,
+						Content: &delta.Content,
 					}
 				}
 			}
