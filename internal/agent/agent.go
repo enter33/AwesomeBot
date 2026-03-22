@@ -148,6 +148,9 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			Model:    a.model,
 			Messages: messages,
 			Tools:    a.buildTools(),
+			StreamOptions: openai.ChatCompletionStreamOptionsParam{
+				IncludeUsage: openai.Bool(true),
+			},
 		}
 
 		logging.Info("========== 调用 LLM ==========")
@@ -157,6 +160,11 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 		for stream.Next() {
 			chunk := stream.Current()
 			acc.AddChunk(chunk)
+
+			// 检查 chunk 是否包含 usage 信息（当 StreamOptions.IncludeUsage=true 时，最后一个 chunk 包含 usage）
+			if chunk.Usage.TotalTokens > 0 {
+				usage = chunk.Usage
+			}
 
 			if len(chunk.Choices) > 0 {
 				deltaRaw := chunk.Choices[0].Delta
@@ -189,10 +197,6 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			logging.Warn("LLM 返回为空")
 			return nil
 		}
-		// 累加 token 用量（每次 LLM 调用后累加）
-		usage.PromptTokens += acc.Usage.PromptTokens
-		usage.CompletionTokens += acc.Usage.CompletionTokens
-		usage.TotalTokens += acc.Usage.TotalTokens
 		totalTokens = int(usage.TotalTokens)
 		message := acc.Choices[0].Message
 
