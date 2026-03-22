@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awesome/awesomebot/pkg/config"
 )
 
 // Skill 技能数据结构
@@ -25,7 +27,7 @@ type Manager struct {
 
 // NewManager 创建技能管理器
 func NewManager() *Manager {
-	skillsDir := filepath.Join(getWorkspaceDir(), ".awesome", "skills")
+	skillsDir := filepath.Join(config.GetAwesomeDir(), "skills")
 	return &Manager{
 		skillsDir: skillsDir,
 		skills:    make([]Skill, 0),
@@ -79,10 +81,3 @@ func (m *Manager) FormatForPrompt() string {
 	return sb.String()
 }
 
-func getWorkspaceDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return dir
-}

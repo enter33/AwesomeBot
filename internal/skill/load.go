@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/awesome/awesomebot/pkg/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,8 +21,8 @@ type frontMatter struct {
 
 // LoadSkill 根据 ID 加载技能
 func LoadSkill(id string) (Skill, error) {
-	workspaceDir := getWorkspaceDir()
-	skillDir := filepath.Join(workspaceDir, ".awesome", "skills", id)
+	awesomeDir := config.GetAwesomeDir()
+	skillDir := filepath.Join(awesomeDir, "skills", id)
 	instructionPath := filepath.Join(skillDir, "SKILL.md")
 
 	instructionBytes, err := os.ReadFile(instructionPath)
@@ -55,12 +56,12 @@ func LoadSkill(id string) (Skill, error) {
 		return Skill{}, errors.New("skill must have a 'description' field in front matter")
 	}
 
-	scripts, err := listFiles(filepath.Join(skillDir, "scripts"), workspaceDir)
+	scripts, err := listFiles(filepath.Join(skillDir, "scripts"), awesomeDir)
 	if err != nil {
 		return Skill{}, fmt.Errorf("failed to discover skill scripts: %w", err)
 	}
 
-	references, err := listFiles(filepath.Join(skillDir, "references"), workspaceDir)
+	references, err := listFiles(filepath.Join(skillDir, "references"), awesomeDir)
 	if err != nil {
 		return Skill{}, fmt.Errorf("failed to discover skill references: %w", err)
 	}
@@ -75,7 +76,7 @@ func LoadSkill(id string) (Skill, error) {
 	}, nil
 }
 
-func listFiles(baseDir, workspaceDir string) ([]string, error) {
+func listFiles(baseDir, awesomeDir string) ([]string, error) {
 	if _, err := os.Stat(baseDir); err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
@@ -92,7 +93,7 @@ func listFiles(baseDir, workspaceDir string) ([]string, error) {
 			return nil
 		}
 
-		relPath, err := filepath.Rel(workspaceDir, path)
+		relPath, err := filepath.Rel(awesomeDir, path)
 		if err != nil {
 			return err
 		}

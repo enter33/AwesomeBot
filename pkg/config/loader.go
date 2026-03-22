@@ -114,3 +114,12 @@ func LoadMcpServerConfig(path string) (map[string]McpServerConfig, error) {
 	}
 	return config, nil
 }
+
+// GetWorkspaceDir 获取当前工作目录
+func GetWorkspaceDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return dir
+}

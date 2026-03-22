@@ -3,7 +3,6 @@ package context
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 
@@ -179,7 +178,7 @@ func (c *Engine) SetMemoryEventHook(hook func(running bool, err error)) {
 func (c *Engine) BuildSystemPrompt() string {
 	replaceMap := make(map[string]string)
 	replaceMap["{runtime}"] = runtime.GOOS
-	replaceMap["{workspace_path}"] = getWorkspaceDir()
+	replaceMap["{workspace_path}"] = config.GetWorkspaceDir()
 
 	if c.memory != nil {
 		replaceMap["{memory}"] = c.memory.String()
@@ -206,10 +205,3 @@ func (c *Engine) Reset() {
 	c.contextTokens = 0
 }
 
-func getWorkspaceDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return dir
-}

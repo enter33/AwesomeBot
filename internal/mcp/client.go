@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -42,7 +41,7 @@ func NewClient(name string, server config.McpServerConfig) *Client {
 
 func initRunningVars() map[string]string {
 	return map[string]string{
-		"${workspaceFolder}": getWorkspaceDir(),
+		"${workspaceFolder}": config.GetWorkspaceDir(),
 	}
 }
 
@@ -149,10 +148,3 @@ func (t *McpTool) Execute(ctx context.Context, argumentsInJSON string) (string, 
 	return t.client.callTool(ctx, t.toolName, argumentsInJSON)
 }
 
-func getWorkspaceDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return dir
-}

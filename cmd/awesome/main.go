@@ -92,7 +92,7 @@ func main() {
 	}
 
 	homeStorage := storage.NewFileSystemStorage(config.GetAwesomeDir())
-	workspaceStorage := storage.NewFileSystemStorage(getWorkspaceDir())
+	workspaceStorage := storage.NewFileSystemStorage(config.GetWorkspaceDir())
 	memoryUpdater := memory.NewLLMMemoryUpdater(llmConfig)
 	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, memoryUpdater)
 
@@ -110,7 +110,7 @@ func main() {
 	tools := []tool.Tool{
 		tool.NewReadTool(),
 		tool.NewWriteTool(),
-		tool.CreateBashTool(getWorkspaceDir()),
+		tool.CreateBashTool(config.GetWorkspaceDir()),
 		tool.NewLoadStorageTool(memoryStorage),
 		tool.NewLoadSkillTool(),
 	}
@@ -179,10 +179,3 @@ func runInitWizard() config.Config {
 	return cfg
 }
 
-func getWorkspaceDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return dir
-}
