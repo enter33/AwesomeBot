@@ -109,12 +109,16 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 	}
 
 	// 更新记忆
-	if c.onMemoryEvent != nil {
-		c.onMemoryEvent(true, nil)
+	if c.memory.Enabled() {
+		if c.onMemoryEvent != nil {
+			c.onMemoryEvent(true, nil)
+		}
 	}
 	err := c.memory.Update(ctx, draft.NewMessages)
-	if c.onMemoryEvent != nil {
-		c.onMemoryEvent(false, err)
+	if c.memory.Enabled() {
+		if c.onMemoryEvent != nil {
+			c.onMemoryEvent(false, err)
+		}
 	}
 	if err != nil {
 		return err

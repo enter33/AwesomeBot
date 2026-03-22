@@ -95,6 +95,20 @@ go run ./cmd/awesome/
 OPENAI_API_KEY=sk-xxx
 ```
 
+### 全局配置文件
+
+位于 `~/.awesome/awesome.json`：
+
+```json
+{
+  "use_memory": true
+}
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `use_memory` | bool | `true` | 是否启用记忆更新功能。关闭后不会调用 LLM 更新记忆，但已有的记忆内容仍会加载到上下文中 |
+
 ## 使用
 
 ### 启动
@@ -299,6 +313,7 @@ description: 执行代码审查，检查潜在问题和改进建议
 | 路径 | 说明 |
 |------|------|
 | `~/.awesome/config.json` | LLM 配置文件 |
+| `~/.awesome/awesome.json` | 全局配置（记忆功能开关等） |
 | `~/.awesome/mcp.json` | MCP 服务器配置 |
 | `~/.awesome/memory/MEMORY.md` | 全局记忆 |
 | `~/.awesome/logs/` | 日志文件目录 |

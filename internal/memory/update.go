@@ -24,6 +24,36 @@ func NewLLMMemoryUpdater(modelConf config.Config) *LLMMemoryUpdater {
 	}
 }
 
+func (u *LLMMemoryUpdater) Enabled() bool {
+	return true
+}
+
+// ConditionalMemoryUpdater 根据条件决定是否执行 memory 更新
+type ConditionalMemoryUpdater struct {
+	updater   MemoryUpdater
+	useMemory bool
+}
+
+// NewConditionalMemoryUpdater 创建条件更新器
+func NewConditionalMemoryUpdater(updater MemoryUpdater, useMemory bool) *ConditionalMemoryUpdater {
+	return &ConditionalMemoryUpdater{
+		updater:   updater,
+		useMemory: useMemory,
+	}
+}
+
+func (c *ConditionalMemoryUpdater) Enabled() bool {
+	return c.useMemory
+}
+
+func (c *ConditionalMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
+	// 如果 useMemory 为 false，不执行更新，直接返回原 memory
+	if !c.useMemory {
+		return oldMemory, nil
+	}
+	return c.updater.Update(ctx, oldMemory, newMessages)
+}
+
 func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
 	if len(newMessages) == 0 {
 		return oldMemory, nil

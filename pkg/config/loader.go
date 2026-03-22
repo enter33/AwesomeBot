@@ -123,3 +123,45 @@ func GetWorkspaceDir() string {
 	}
 	return dir
 }
+
+// AwesomeConfig awesomebot 全局配置
+type AwesomeConfig struct {
+	UseMemory bool `json:"use_memory"`
+}
+
+// GetAwesomeConfigPath 获取 awesome 配置文件的路径
+func GetAwesomeConfigPath() string {
+	return filepath.Join(GetAwesomeDir(), "awesome.json")
+}
+
+// EnsureAwesomeConfigFile 确保 awesome 配置文件存在（如果不存在则创建默认配置）
+func EnsureAwesomeConfigFile(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	// 确保目录存在
+	if err := EnsureAwesomeDir(); err != nil {
+		return err
+	}
+	// 创建默认配置文件，useMemory 默认为 true
+	defaultCfg := AwesomeConfig{UseMemory: true}
+	content, err := json.MarshalIndent(defaultCfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0644)
+}
+
+// LoadAwesomeConfig 加载 awesome 配置
+func LoadAwesomeConfig(path string) (AwesomeConfig, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return AwesomeConfig{}, err
+	}
+	var cfg AwesomeConfig
+	// 如果解析失败，返回默认配置（useMemory 为 true）
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		return AwesomeConfig{UseMemory: true}, nil
+	}
+	return cfg, nil
+}

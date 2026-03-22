@@ -93,8 +93,17 @@ func main() {
 
 	homeStorage := storage.NewFileSystemStorage(config.GetAwesomeDir())
 	workspaceStorage := storage.NewFileSystemStorage(config.GetWorkspaceDir())
+
+	// 确保 awesome.json 存在并加载配置
+	awesomeConfigPath := config.GetAwesomeConfigPath()
+	if err := config.EnsureAwesomeConfigFile(awesomeConfigPath); err != nil {
+		log.Printf("创建 awesome 配置文件失败: %v", err)
+	}
+	awesomeConfig, _ := config.LoadAwesomeConfig(awesomeConfigPath)
+
 	memoryUpdater := memory.NewLLMMemoryUpdater(llmConfig)
-	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, memoryUpdater)
+	conditionalUpdater := memory.NewConditionalMemoryUpdater(memoryUpdater, awesomeConfig.UseMemory)
+	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, conditionalUpdater)
 
 	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies)
 

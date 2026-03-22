@@ -11,6 +11,8 @@ import (
 type Memory interface {
 	String() string
 	Update(ctx context.Context, newMessages []config.OpenAIMessage) error
+	// Enabled 返回是否启用 memory 更新功能
+	Enabled() bool
 }
 
 type MultiLevelMemory struct {
@@ -27,6 +29,8 @@ type MultiLevelMemory struct {
 // MemoryUpdater 记忆更新器接口
 type MemoryUpdater interface {
 	Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error)
+	// Enabled 返回是否启用 memory 更新功能
+	Enabled() bool
 }
 
 func NewMultiLevelMemory(globalStorage storage.Storage, workspaceStorage storage.Storage, u MemoryUpdater) *MultiLevelMemory {
@@ -53,6 +57,10 @@ func (m *MultiLevelMemory) load() MemoryContent {
 
 func (m *MultiLevelMemory) String() string {
 	return m.content.String()
+}
+
+func (m *MultiLevelMemory) Enabled() bool {
+	return m.updater.Enabled()
 }
 
 func (m *MultiLevelMemory) Update(ctx context.Context, newMessages []config.OpenAIMessage) error {
