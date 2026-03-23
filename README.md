@@ -7,7 +7,7 @@
 - **流式响应**: LLM 流式输出，实时显示推理过程（reasoning content）
 - **上下文管理**: 智能上下文策略（摘要、卸载、截断），自动维护上下文长度
 - **两级记忆**: Global + Workspace 记忆系统，跨会话和当前目录持久化
-- **内置工具**: bash（支持 Docker 沙箱）、read、write、web_search、web_fetch、load_skill、load_storage
+- **内置工具**: bash（支持 Docker 沙箱）、read（分页/行号）、write、edit（智能匹配）、list（递归列表）、web_search、web_fetch、load_skill、load_storage
 - **Web 工具**: web_search（网络搜索）、web_fetch（网页内容提取），支持多种 provider
 - **MCP 集成**: 支持 Model Context Protocol，可连接多种 MCP 服务器
 - **技能系统**: 可扩展的技能加载机制，通过 SKILL.md 定义复杂技能
@@ -223,8 +223,10 @@ TUI 会实时显示以下类型的消息：
 
 | 工具 | 说明 | 需要确认 |
 |------|------|----------|
-| `read` | 读取文件内容 | 否 |
+| `read` | 读取文件内容（分页/行号/图片检测） | 否 |
 | `write` | 写入文件内容 | 是 |
+| `edit` | 编辑文件（智能匹配/CRLF处理） | 是 |
+| `list` | 列出目录（递归/忽略噪音目录） | 否 |
 | `bash` | 执行 bash 命令 | 是 |
 | `web_search` | 网络搜索 | 否 |
 | `web_fetch` | 抓取网页内容 | 否 |
@@ -235,6 +237,64 @@ TUI 会实时显示以下类型的消息：
 
 - **Docker 可用**: 使用 Docker 沙箱容器执行命令（隔离环境）
 - **Docker 不可用**: 使用常规 bash 执行
+
+### 文件系统工具
+
+#### read
+
+读取文件内容，支持分页和行号显示：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `path` | string | 必需 | 文件路径 |
+| `offset` | int | 1 | 起始行号（1-indexed） |
+| `limit` | int | 2000 | 最大行数 |
+
+- 自动检测图片文件（MIME 类型）
+- 超长内容自动截断（MAX_CHARS = 128000）
+- 分页提示：`"(Showing lines X-Y of Z. Use offset=Y+1 to continue.)"`
+
+#### write
+
+写入内容到文件：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `path` | string | 文件路径 |
+| `content` | string | 内容 |
+
+- 自动创建父目录
+- 支持 `~` 路径扩展
+
+#### edit
+
+编辑文件内容：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `path` | string | 文件路径 |
+| `old_text` | string | 要替换的文本 |
+| `new_text` | string | 替换后的文本 |
+| `replace_all` | bool | 替换所有匹配（默认 false） |
+
+- 精确匹配优先
+- 失败时使用 trimmed sliding window 匹配（忽略首尾空白）
+- CRLF 自动转换
+- 相似度 >50% 时显示 unified diff 提示
+
+#### list
+
+列出目录内容：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `path` | string | 必需 | 目录路径 |
+| `recursive` | bool | false | 递归列出 |
+| `max_entries` | int | 200 | 最大条目数 |
+
+- 自动忽略噪音目录：`.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `dist`, `build` 等
+- 非递归：📁 `dirname/` / 📄 `filename`
+- 递归：路径格式，目录带 `/` 后缀
 
 ## 上下文策略
 
@@ -407,8 +467,11 @@ awesomebot/
 │   ├── tool/                    # 工具实现
 │   │   ├── bash.go             # Bash 工具
 │   │   ├── docker_bash.go      # Docker 沙箱 bash
-│   │   ├── read.go             # Read 工具
+│   │   ├── read.go             # Read 工具（分页/行号/图片检测）
 │   │   ├── write.go            # Write 工具
+│   │   ├── edit.go             # Edit 工具（智能匹配）
+│   │   ├── list.go             # List 工具（递归列表）
+│   │   ├── path.go             # 路径解析器
 │   │   ├── web_search.go       # Web 搜索工具
 │   │   ├── web_fetch.go        # Web 抓取工具
 │   │   ├── web_helpers.go      # Web 工具辅助函数

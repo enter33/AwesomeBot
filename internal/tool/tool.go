@@ -13,6 +13,7 @@ const (
 	AgentToolRead        AgentTool = "read"
 	AgentToolWrite       AgentTool = "write"
 	AgentToolEdit        AgentTool = "edit"
+	AgentToolList        AgentTool = "list"
 	AgentToolBash        AgentTool = "bash"
 	AgentToolLoadStorage AgentTool = "load_storage"
 	AgentToolLoadSkill   AgentTool = "load_skill"

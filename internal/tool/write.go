@@ -10,10 +10,21 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-type WriteTool struct{}
+type WriteTool struct {
+	pathResolver *PathResolver
+}
 
 func NewWriteTool() *WriteTool {
-	return &WriteTool{}
+	return &WriteTool{
+		pathResolver: NewPathResolver("", ""),
+	}
+}
+
+// NewWriteToolWithResolver 创建带 PathResolver 的 WriteTool
+func NewWriteToolWithResolver(resolver *PathResolver) *WriteTool {
+	return &WriteTool{
+		pathResolver: resolver,
+	}
 }
 
 type WriteToolParam struct {
@@ -53,35 +64,24 @@ func (t *WriteTool) Execute(ctx context.Context, argumentsInJSON string) (string
 		return "", err
 	}
 
-	// 确保目录存在
-	dir := os.Getenv("HOME")
-	if dir == "" {
-		// Windows
-		dir = os.Getenv("USERPROFILE")
-	}
-	if dir == "" {
-		// 如果都获取不到，使用当前目录
-		dir = "."
-	}
-
-	// 检查是否是绝对路径，如果不是则拼接到工作目录
-	if !filepath.IsAbs(p.Path) {
-		cwd, _ := os.Getwd()
-		p.Path = filepath.Join(cwd, p.Path)
+	// 解析路径
+	resolvedPath, err := t.pathResolver.Resolve(p.Path)
+	if err != nil {
+		return "", err
 	}
 
 	// 确保父目录存在
-	parentDir := filepath.Dir(p.Path)
+	parentDir := filepath.Dir(resolvedPath)
 	if parentDir != "" {
 		if err := os.MkdirAll(parentDir, 0755); err != nil {
 			return "", err
 		}
 	}
 
-	err = os.WriteFile(p.Path, []byte(p.Content), 0644)
+	err = os.WriteFile(resolvedPath, []byte(p.Content), 0644)
 	if err != nil {
 		return "", err
 	}
 
-	return "File written successfully: " + p.Path, nil
+	return "File written successfully: " + resolvedPath, nil
 }

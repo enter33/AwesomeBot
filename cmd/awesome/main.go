@@ -116,11 +116,17 @@ func main() {
 		},
 	}
 
+	// 创建 PathResolver
+	workspaceDir := config.GetWorkspaceDir()
+	pathResolver := tool.NewPathResolver(workspaceDir, workspaceDir)
+
 	// 构建工具列表
 	tools := []tool.Tool{
-		tool.NewReadTool(),
-		tool.NewWriteTool(),
-		tool.CreateBashTool(config.GetWorkspaceDir()),
+		tool.NewReadToolWithResolver(pathResolver),
+		tool.NewWriteToolWithResolver(pathResolver),
+		tool.NewEditToolWithResolver(pathResolver),
+		tool.NewListDirToolWithResolver(pathResolver),
+		tool.CreateBashTool(workspaceDir),
 		tool.NewLoadStorageTool(memoryStorage),
 		tool.NewLoadSkillTool(),
 	}
