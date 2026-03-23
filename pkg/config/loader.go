@@ -126,7 +126,8 @@ func GetWorkspaceDir() string {
 
 // AwesomeConfig awesomebot 全局配置
 type AwesomeConfig struct {
-	UseMemory bool `json:"use_memory"`
+	UseMemory             bool `json:"use_memory"`
+	MemoryUpdateThreshold int  `json:"memory_update_threshold"` // 每N轮更新一次，默认5
 }
 
 // GetAwesomeConfigPath 获取 awesome 配置文件的路径
@@ -143,8 +144,8 @@ func EnsureAwesomeConfigFile(path string) error {
 	if err := EnsureAwesomeDir(); err != nil {
 		return err
 	}
-	// 创建默认配置文件，useMemory 默认为 true
-	defaultCfg := AwesomeConfig{UseMemory: true}
+	// 创建默认配置文件，useMemory 默认为 true，MemoryUpdateThreshold 默认为 5
+	defaultCfg := AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5}
 	content, err := json.MarshalIndent(defaultCfg, "", "  ")
 	if err != nil {
 		return err
@@ -159,9 +160,13 @@ func LoadAwesomeConfig(path string) (AwesomeConfig, error) {
 		return AwesomeConfig{}, err
 	}
 	var cfg AwesomeConfig
-	// 如果解析失败，返回默认配置（useMemory 为 true）
+	// 如果解析失败，返回默认配置（useMemory 为 true，MemoryUpdateThreshold 为 5）
 	if err := json.Unmarshal(content, &cfg); err != nil {
-		return AwesomeConfig{UseMemory: true}, nil
+		return AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5}, nil
+	}
+	// 如果 MemoryUpdateThreshold 未配置或为 0，使用默认值 5
+	if cfg.MemoryUpdateThreshold <= 0 {
+		cfg.MemoryUpdateThreshold = 5
 	}
 	return cfg, nil
 }

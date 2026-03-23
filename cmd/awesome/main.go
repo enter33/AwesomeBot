@@ -103,7 +103,8 @@ func main() {
 
 	memoryUpdater := memory.NewLLMMemoryUpdater(llmConfig)
 	conditionalUpdater := memory.NewConditionalMemoryUpdater(memoryUpdater, awesomeConfig.UseMemory)
-	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, conditionalUpdater)
+	throttledUpdater := memory.NewThrottledMemoryUpdater(conditionalUpdater, awesomeConfig.MemoryUpdateThreshold)
+	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, throttledUpdater)
 
 	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies)
 
