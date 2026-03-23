@@ -125,6 +125,23 @@ func main() {
 		tool.NewLoadSkillTool(),
 	}
 
+	// 添加 Web 工具（如果配置存在）
+	webSearchConfigPath := config.GetWebSearchConfigPath()
+	if err := config.EnsureWebSearchConfigFile(webSearchConfigPath); err != nil {
+		log.Printf("创建 web_search 配置文件失败: %v", err)
+	} else {
+		webSearchCfg, _ := config.LoadWebSearchConfig(webSearchConfigPath)
+		tools = append(tools, tool.NewWebSearchTool(webSearchCfg))
+	}
+
+	webFetchConfigPath := config.GetWebFetchConfigPath()
+	if err := config.EnsureWebFetchConfigFile(webFetchConfigPath); err != nil {
+		log.Printf("创建 web_fetch 配置文件失败: %v", err)
+	} else {
+		webFetchCfg, _ := config.LoadWebFetchConfig(webFetchConfigPath)
+		tools = append(tools, tool.NewWebFetchTool(webFetchCfg))
+	}
+
 	// 创建 LLM 客户端
 	llmClient := llm.NewOpenAIClient(llmConfig)
 

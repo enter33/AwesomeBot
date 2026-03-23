@@ -7,7 +7,8 @@
 - **流式响应**: LLM 流式输出，实时显示推理过程（reasoning content）
 - **上下文管理**: 智能上下文策略（摘要、卸载、截断），自动维护上下文长度
 - **两级记忆**: Global + Workspace 记忆系统，跨会话和当前目录持久化
-- **内置工具**: bash（支持 Docker 沙箱）、read、write、load_skill、load_storage
+- **内置工具**: bash（支持 Docker 沙箱）、read、write、web_search、web_fetch、load_skill、load_storage
+- **Web 工具**: web_search（网络搜索）、web_fetch（网页内容提取），支持多种 provider
 - **MCP 集成**: 支持 Model Context Protocol，可连接多种 MCP 服务器
 - **技能系统**: 可扩展的技能加载机制，通过 SKILL.md 定义复杂技能
 - **工具确认**: 危险操作（bash/write）需要用户确认，可选择"始终允许"
@@ -86,6 +87,53 @@ go run ./cmd/awesome/
 | `args` | string[] | 命令参数 |
 | `env` | map | 环境变量 |
 | `url` | string | HTTP MCP 服务器地址（替代 command/args） |
+
+### Web 搜索配置
+
+位于 `~/.awesome/web_search.json`：
+
+```json
+{
+  "provider": "jina",
+  "api_key": "your_jina_api_key",
+  "max_results": 5
+}
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `provider` | string | 无 | 搜索 provider：jina、duckduckgo、tavily、searxng、brave |
+| `api_key` | string | 环境变量 | API Key |
+| `base_url` | string | 无 | SearXNG 自托管地址 |
+| `max_results` | int | 5 | 最大结果数（1-10） |
+
+**支持的 provider：**
+
+| Provider | API Key | 说明 |
+|----------|---------|------|
+| `jina` | 需要 | Jina AI 搜索，可从 https://jina.ai/ 获取 |
+| `duckduckgo` | 不需要 | 免费搜索，**国内可能无法访问** |
+| `tavily` | 需要 | Tavily 搜索 |
+| `searxng` | 不需要 | 自建 SearXNG 服务，需配置 base_url |
+| `brave` | 需要 | Brave 搜索 |
+
+### Web 抓取配置
+
+位于 `~/.awesome/web_fetch.json`：
+
+```json
+{
+  "max_chars": 50000,
+  "jina_api_key": "",
+  "proxy": ""
+}
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `max_chars` | int | 50000 | 最大字符数 |
+| `jina_api_key` | string | 环境变量 | Jina Reader API Key（可选） |
+| `proxy` | string | 无 | 代理地址 |
 
 ### 环境变量
 
@@ -178,6 +226,8 @@ TUI 会实时显示以下类型的消息：
 | `read` | 读取文件内容 | 否 |
 | `write` | 写入文件内容 | 是 |
 | `bash` | 执行 bash 命令 | 是 |
+| `web_search` | 网络搜索 | 否 |
+| `web_fetch` | 抓取网页内容 | 否 |
 | `load_skill` | 加载技能指令 | 否 |
 | `load_storage` | 加载存储内容 | 否 |
 
@@ -319,6 +369,8 @@ description: 执行代码审查，检查潜在问题和改进建议
 | `~/.awesome/config.json` | LLM 配置文件 |
 | `~/.awesome/awesome.json` | 全局配置（记忆功能开关等） |
 | `~/.awesome/mcp.json` | MCP 服务器配置 |
+| `~/.awesome/web_search.json` | Web 搜索配置 |
+| `~/.awesome/web_fetch.json` | Web 抓取配置 |
 | `~/.awesome/memory/MEMORY.md` | 全局记忆 |
 | `~/.awesome/logs/` | 日志文件目录 |
 | `~/.awesome/skills/` | 技能目录 |
@@ -343,6 +395,8 @@ awesomebot/
 │   ├── memory/                  # 记忆系统
 │   │   ├── memory.go           # 记忆接口和实现
 │   │   └── update.go           # 记忆更新逻辑
+│   ├── security/               # 安全模块
+│   │   └── network.go          # SSRF 保护
 │   ├── mcp/                     # MCP 客户端
 │   │   └── client.go           # MCP 客户端实现
 │   ├── skill/                   # 技能系统
@@ -355,6 +409,9 @@ awesomebot/
 │   │   ├── docker_bash.go      # Docker 沙箱 bash
 │   │   ├── read.go             # Read 工具
 │   │   ├── write.go            # Write 工具
+│   │   ├── web_search.go       # Web 搜索工具
+│   │   ├── web_fetch.go        # Web 抓取工具
+│   │   ├── web_helpers.go      # Web 工具辅助函数
 │   │   ├── factory.go          # 工具工厂
 │   │   └── ...
 │   ├── tui/                     # TUI 界面
@@ -365,7 +422,8 @@ awesomebot/
 ├── pkg/
 │   ├── config/                   # 配置管理
 │   │   ├── config.go           # 主配置
-│   │   └── loader.go           # MCP 配置加载
+│   │   ├── loader.go           # MCP 配置加载
+│   │   └── web_config.go       # Web 工具配置
 │   ├── llm/                     # LLM 客户端
 │   │   ├── client.go          # 客户端接口
 │   │   └── openai.go          # OpenAI 兼容客户端
@@ -384,6 +442,7 @@ awesomebot/
 | github.com/openai/openai-go/v3 | 3.24.0 | OpenAI API 客户端 |
 | github.com/modelcontextprotocol/go-sdk | 1.4.0 | MCP 协议支持 |
 | github.com/tiktoken-go/tokenizer | 0.7.0 | Token 计数 |
+| github.com/PuerkitoBio/goquery | 1.10.1 | HTML DOM 解析 |
 | gopkg.in/yaml.v3 | 3.0.1 | YAML 解析 |
 
 ## 常见问题

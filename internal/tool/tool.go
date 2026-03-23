@@ -16,6 +16,8 @@ const (
 	AgentToolBash        AgentTool = "bash"
 	AgentToolLoadStorage AgentTool = "load_storage"
 	AgentToolLoadSkill   AgentTool = "load_skill"
+	AgentToolWebSearch   AgentTool = "web_search"
+	AgentToolWebFetch    AgentTool = "web_fetch"
 )
 
 // Tool 工具接口
