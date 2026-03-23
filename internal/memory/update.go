@@ -28,6 +28,10 @@ func (u *LLMMemoryUpdater) Enabled() bool {
 	return true
 }
 
+func (u *LLMMemoryUpdater) ShouldNotify() bool {
+	return true
+}
+
 // ConditionalMemoryUpdater 根据条件决定是否执行 memory 更新
 type ConditionalMemoryUpdater struct {
 	updater   MemoryUpdater
@@ -46,12 +50,61 @@ func (c *ConditionalMemoryUpdater) Enabled() bool {
 	return c.useMemory
 }
 
+func (c *ConditionalMemoryUpdater) ShouldNotify() bool {
+	return c.useMemory
+}
+
 func (c *ConditionalMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
 	// 如果 useMemory 为 false，不执行更新，直接返回原 memory
 	if !c.useMemory {
 		return oldMemory, nil
 	}
 	return c.updater.Update(ctx, oldMemory, newMessages)
+}
+
+// ThrottledMemoryUpdater 基于对话轮数的节流更新器
+type ThrottledMemoryUpdater struct {
+	updater   MemoryUpdater
+	threshold int // 阈值，达到此轮数才执行更新
+	counter   int // 当前计数器
+}
+
+// NewThrottledMemoryUpdater 创建节流更新器
+func NewThrottledMemoryUpdater(updater MemoryUpdater, threshold int) *ThrottledMemoryUpdater {
+	return &ThrottledMemoryUpdater{
+		updater:   updater,
+		threshold: threshold,
+		counter:   0,
+	}
+}
+
+func (t *ThrottledMemoryUpdater) Enabled() bool {
+	return t.updater.Enabled()
+}
+
+func (t *ThrottledMemoryUpdater) ShouldNotify() bool {
+	if !t.updater.Enabled() {
+		return false
+	}
+	return t.counter+1 >= t.threshold // 下一轮是否满足更新条件
+}
+
+func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
+	// 如果 updater 未启用，直接返回原 memory
+	if !t.updater.Enabled() {
+		return oldMemory, nil
+	}
+
+	t.counter++
+
+	// 达到阈值，执行更新并重置计数器
+	if t.counter >= t.threshold {
+		t.counter = 0
+		return t.updater.Update(ctx, oldMemory, newMessages)
+	}
+
+	// 未达到阈值，不执行更新
+	return oldMemory, nil
 }
 
 func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {

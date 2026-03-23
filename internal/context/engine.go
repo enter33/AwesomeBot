@@ -104,18 +104,15 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 		return nil
 	}
 
-	if err := c.applyPolicies(ctx); err != nil {
-		return err
-	}
-
-	// 更新记忆
-	if c.memory.Enabled() {
+	// 更新记忆（先于上下文压缩）
+	shouldNotify := c.memory.ShouldNotify()
+	if shouldNotify {
 		if c.onMemoryEvent != nil {
 			c.onMemoryEvent(true, nil)
 		}
 	}
 	err := c.memory.Update(ctx, draft.NewMessages)
-	if c.memory.Enabled() {
+	if shouldNotify {
 		if c.onMemoryEvent != nil {
 			c.onMemoryEvent(false, err)
 		}
@@ -123,6 +120,11 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 	if err != nil {
 		return err
 	}
+
+	if err := c.applyPolicies(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 

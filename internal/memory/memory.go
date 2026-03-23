@@ -13,6 +13,8 @@ type Memory interface {
 	Update(ctx context.Context, newMessages []config.OpenAIMessage) error
 	// Enabled 返回是否启用 memory 更新功能
 	Enabled() bool
+	// ShouldNotify 返回这次是否应该发送事件通知（用于节流场景）
+	ShouldNotify() bool
 }
 
 type MultiLevelMemory struct {
@@ -31,6 +33,8 @@ type MemoryUpdater interface {
 	Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error)
 	// Enabled 返回是否启用 memory 更新功能
 	Enabled() bool
+	// ShouldNotify 返回这次是否应该发送事件通知（用于节流场景）
+	ShouldNotify() bool
 }
 
 func NewMultiLevelMemory(globalStorage storage.Storage, workspaceStorage storage.Storage, u MemoryUpdater) *MultiLevelMemory {
@@ -61,6 +65,10 @@ func (m *MultiLevelMemory) String() string {
 
 func (m *MultiLevelMemory) Enabled() bool {
 	return m.updater.Enabled()
+}
+
+func (m *MultiLevelMemory) ShouldNotify() bool {
+	return m.updater.ShouldNotify()
 }
 
 func (m *MultiLevelMemory) Update(ctx context.Context, newMessages []config.OpenAIMessage) error {
