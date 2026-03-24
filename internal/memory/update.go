@@ -10,6 +10,7 @@ import (
 
 	"github.com/enter33/AwesomeBot/pkg/config"
 	"github.com/enter33/AwesomeBot/pkg/llm"
+	"github.com/enter33/AwesomeBot/internal/logging"
 )
 
 type LLMMemoryUpdater struct {
@@ -65,8 +66,9 @@ func (c *ConditionalMemoryUpdater) Update(ctx context.Context, oldMemory MemoryC
 // ThrottledMemoryUpdater 基于对话轮数的节流更新器
 type ThrottledMemoryUpdater struct {
 	updater   MemoryUpdater
-	threshold int // 阈值，达到此轮数才执行更新
-	counter   int // 当前计数器
+	threshold int                      // 阈值，达到此轮数才执行更新
+	counter   int                      // 当前计数器
+	messages   []config.OpenAIMessage   // 累积的消息队列
 }
 
 // NewThrottledMemoryUpdater 创建节流更新器
@@ -75,6 +77,7 @@ func NewThrottledMemoryUpdater(updater MemoryUpdater, threshold int) *ThrottledM
 		updater:   updater,
 		threshold: threshold,
 		counter:   0,
+		messages:  nil,
 	}
 }
 
@@ -95,12 +98,17 @@ func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryCon
 		return oldMemory, nil
 	}
 
+	// 累积消息
+	t.messages = append(t.messages, newMessages...)
 	t.counter++
 
-	// 达到阈值，执行更新并重置计数器
+	// 达到阈值，执行更新并重置计数器和消息队列
 	if t.counter >= t.threshold {
 		t.counter = 0
-		return t.updater.Update(ctx, oldMemory, newMessages)
+		result, err := t.updater.Update(ctx, oldMemory, t.messages)
+		// 更新后清空累积队列
+		t.messages = nil
+		return result, err
 	}
 
 	// 未达到阈值，不执行更新
@@ -130,6 +138,9 @@ func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, 
 	prompt := updateMemoryPrompt
 	prompt = strings.ReplaceAll(prompt, "{current_memory}", oldMemory.String())
 	prompt = strings.ReplaceAll(prompt, "{new_messages}", b.String())
+
+	logging.Info("========== 发送给 LLM 进行提取记忆 的 Messages ==========")
+	logging.Info("Message: %s", string(prompt))
 
 	request := openai.ChatCompletionNewParams{
 		Model: u.modelConf.Model,
