@@ -62,9 +62,23 @@ go run ./cmd/awesome/
 {
   "base_url": "https://api.openai.com/v1",
   "model": "gpt-4o-mini",
-  "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "timeout": 120
 }
 ```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `base_url` | string | 必需 | OpenAI 兼容 API 地址 |
+| `model` | string | 必需 | 模型名称 |
+| `api_key` | string | 必需 | API 密钥 |
+| `timeout` | int | 120 | LLM 请求超时时间（秒） |
+
+#### LLM 超时与重试
+
+- **超时**: LLM 请求默认 120 秒超时，可在配置中修改 `timeout` 字段
+- **重试**: 请求失败时自动重试，最多 3 次
+- **退避策略**: 重试间隔采用指数退避（1s → 2s → 4s），并添加随机抖动避免多客户端同时重试
 
 ### MCP 服务器配置
 

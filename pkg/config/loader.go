@@ -128,6 +128,7 @@ func GetWorkspaceDir() string {
 type AwesomeConfig struct {
 	UseMemory             bool `json:"use_memory"`
 	MemoryUpdateThreshold int  `json:"memory_update_threshold"` // 每N轮更新一次，默认5
+	ContextWindow         int  `json:"context_window"`         // 上下文窗口大小，默认 128K
 }
 
 // GetAwesomeConfigPath 获取 awesome 配置文件的路径
@@ -144,8 +145,8 @@ func EnsureAwesomeConfigFile(path string) error {
 	if err := EnsureAwesomeDir(); err != nil {
 		return err
 	}
-	// 创建默认配置文件，useMemory 默认为 true，MemoryUpdateThreshold 默认为 5
-	defaultCfg := AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5}
+	// 创建默认配置文件，useMemory 默认为 true，MemoryUpdateThreshold 默认为 5，ContextWindow 默认为 128K
+	defaultCfg := AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5, ContextWindow: DefaultContextWindow}
 	content, err := json.MarshalIndent(defaultCfg, "", "  ")
 	if err != nil {
 		return err
@@ -160,13 +161,17 @@ func LoadAwesomeConfig(path string) (AwesomeConfig, error) {
 		return AwesomeConfig{}, err
 	}
 	var cfg AwesomeConfig
-	// 如果解析失败，返回默认配置（useMemory 为 true，MemoryUpdateThreshold 为 5）
+	// 如果解析失败，返回默认配置（useMemory 为 true，MemoryUpdateThreshold 为 5，ContextWindow 为 128K）
 	if err := json.Unmarshal(content, &cfg); err != nil {
-		return AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5}, nil
+		return AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5, ContextWindow: DefaultContextWindow}, nil
 	}
 	// 如果 MemoryUpdateThreshold 未配置或为 0，使用默认值 5
 	if cfg.MemoryUpdateThreshold <= 0 {
 		cfg.MemoryUpdateThreshold = 5
+	}
+	// 如果 ContextWindow 未配置或为 0，使用默认值 128K
+	if cfg.ContextWindow <= 0 {
+		cfg.ContextWindow = DefaultContextWindow
 	}
 	return cfg, nil
 }

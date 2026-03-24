@@ -81,9 +81,22 @@ func main() {
 		mcpClients = append(mcpClients, mcpClient)
 	}
 
+	// 确保 awesome.json 存在并加载配置
+	awesomeConfigPath := config.GetAwesomeConfigPath()
+	if err := config.EnsureAwesomeConfigFile(awesomeConfigPath); err != nil {
+		log.Printf("创建 awesome 配置文件失败: %v", err)
+	}
+	awesomeConfig, _ := config.LoadAwesomeConfig(awesomeConfigPath)
+
+	// 获取上下文窗口大小，默认 128K
+	contextWindow := awesomeConfig.ContextWindow
+	if contextWindow <= 0 {
+		contextWindow = config.DefaultContextWindow
+	}
+
 	// 创建上下文引擎和 policy
 	memoryStorage := storage.NewMemoryStorage()
-	summarizer := ctxengine.NewLLMSummarizer(llmConfig, 200)
+	summarizer := ctxengine.NewLLMSummarizer(llmConfig, 200, contextWindow)
 
 	policies := []ctxengine.Policy{
 		ctxengine.NewOffloadPolicy(memoryStorage, 0.4, 0, 100),
@@ -94,19 +107,12 @@ func main() {
 	homeStorage := storage.NewFileSystemStorage(config.GetAwesomeDir())
 	workspaceStorage := storage.NewFileSystemStorage(config.GetWorkspaceDir())
 
-	// 确保 awesome.json 存在并加载配置
-	awesomeConfigPath := config.GetAwesomeConfigPath()
-	if err := config.EnsureAwesomeConfigFile(awesomeConfigPath); err != nil {
-		log.Printf("创建 awesome 配置文件失败: %v", err)
-	}
-	awesomeConfig, _ := config.LoadAwesomeConfig(awesomeConfigPath)
-
 	memoryUpdater := memory.NewLLMMemoryUpdater(llmConfig)
 	conditionalUpdater := memory.NewConditionalMemoryUpdater(memoryUpdater, awesomeConfig.UseMemory)
 	throttledUpdater := memory.NewThrottledMemoryUpdater(conditionalUpdater, awesomeConfig.MemoryUpdateThreshold)
 	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, throttledUpdater)
 
-	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies)
+	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies, contextWindow)
 
 	// 配置需要确认的工具
 	confirmConfig := agent.ToolConfirmConfig{
@@ -160,6 +166,7 @@ func main() {
 		mcpClients,
 		contextEngine,
 		llmClient,
+		contextWindow,
 	)
 
 	// 丢弃标准库的日志输出
@@ -199,6 +206,12 @@ func runInitWizard() config.Config {
 	if cfg.ApiKey == "" {
 		fmt.Println("API Key 不能为空，初始化取消。")
 		return cfg
+	}
+
+	fmt.Printf("请输入超时时间（秒，默认 %d）: ", config.DefaultLLMTimeout)
+	fmt.Scanln(&cfg.Timeout)
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = config.DefaultLLMTimeout
 	}
 
 	// 保存配置

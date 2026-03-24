@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -14,6 +15,9 @@ import (
 	"github.com/enter33/AwesomeBot/internal/tool"
 	"github.com/enter33/AwesomeBot/pkg/config"
 )
+
+// LLM 重试配置
+const maxLLMRetries = 3
 
 type ToolConfirmConfig struct {
 	RequireConfirmTools map[tool.AgentTool]bool
@@ -39,6 +43,7 @@ func NewAgent(
 	mcpClients []*mcp.Client,
 	contextEngine *ctxengine.Engine,
 	llmClient openai.Client,
+	contextWindow int,
 ) *Agent {
 	a := Agent{
 		confirmConfig:    confirmConfig,
@@ -50,7 +55,7 @@ func NewAgent(
 		mcpClients:       make(map[string]*mcp.Client),
 	}
 
-	a.contextEngine.Init(systemPrompt, ctxengine.TokenBudget{ContextWindow: config.ContextWindow})
+	a.contextEngine.Init(systemPrompt, ctxengine.TokenBudget{ContextWindow: contextWindow})
 
 	for _, t := range tools {
 		a.nativeTools[t.ToolName()] = t
@@ -144,7 +149,15 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 	var usage openai.CompletionUsage
 	var totalTokens int
 
-	for {
+	for attempt := 0; attempt <= maxLLMRetries; attempt++ {
+		if attempt > 0 {
+			logging.Info("LLM 调用失败，准备重试 (attempt %d/%d)", attempt, maxLLMRetries)
+			// 指数退避: 1s, 2s, 4s
+			sleepDuration := time.Duration(1<<(attempt-1)) * time.Second
+			// 添加随机抖动 (0-1s)
+			sleepDuration += time.Duration(rand.Intn(1000)) * time.Millisecond
+			time.Sleep(sleepDuration)
+		}
 		params := openai.ChatCompletionNewParams{
 			Model:    a.model,
 			Messages: messages,
@@ -217,10 +230,16 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 				Type:    MessageTypeError,
 				Content: config.Ptr(err.Error()),
 			}
+			if attempt < maxLLMRetries {
+				continue
+			}
 			return err
 		}
 		if len(acc.Choices) == 0 {
 			logging.Warn("LLM 返回为空")
+			if attempt < maxLLMRetries {
+				continue
+			}
 			return nil
 		}
 		totalTokens = int(usage.TotalTokens)

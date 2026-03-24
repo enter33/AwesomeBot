@@ -38,15 +38,19 @@ func Ptr[T any](v T) *T {
 	return &v
 }
 
+// DefaultLLMTimeout 默认 LLM 超时时间（秒）
+const DefaultLLMTimeout = 120
+
 // Config LLM 配置
 type Config struct {
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
 	ApiKey  string `json:"api_key"`
+	Timeout int    `json:"timeout"`
 }
 
-// ContextWindow 硬编码的上下文窗口大小
-const ContextWindow = 200000
+// DefaultContextWindow 默认上下文窗口大小 (128K)
+const DefaultContextWindow = 131072
 
 // IsValid 检查配置是否有效
 func (c *Config) IsValid() bool {
@@ -81,8 +85,8 @@ func EnsureConfigFile(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
-	// 创建空配置文件
-	emptyCfg := Config{}
+	// 创建带默认超时的配置文件
+	emptyCfg := Config{Timeout: DefaultLLMTimeout}
 	content, err := json.MarshalIndent(emptyCfg, "", "  ")
 	if err != nil {
 		return err

@@ -53,13 +53,13 @@ type SkillManager interface {
 }
 
 // NewContextEngine 创建上下文引擎
-func NewContextEngine(mem memory.Memory, policies []Policy) *Engine {
+func NewContextEngine(mem memory.Memory, policies []Policy, contextWindow int) *Engine {
 	skillManager := skill.NewManager()
 	_ = skillManager.LoadAll()
 	return &Engine{
 		policies:      policies,
 		messages:      make([]messageWrap, 0),
-		contextWindow: 200000,
+		contextWindow: contextWindow,
 		memory:        mem,
 		skillManager:  skillManager,
 	}

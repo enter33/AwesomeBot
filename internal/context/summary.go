@@ -51,17 +51,19 @@ type LLMSummarizer struct {
 	llmClient        openai.Client
 	modelConf        config.Config
 	summaryCharLimit int
+	contextWindow    int
 }
 
 func (s *LLMSummarizer) GetSummaryInputTokenLimit() int {
-	return config.ContextWindow / 2
+	return s.contextWindow / 2
 }
 
-func NewLLMSummarizer(modelConf config.Config, summaryCharLimit int) *LLMSummarizer {
+func NewLLMSummarizer(modelConf config.Config, summaryCharLimit int, contextWindow int) *LLMSummarizer {
 	return &LLMSummarizer{
 		llmClient:        llm.NewOpenAIClient(modelConf),
 		modelConf:        modelConf,
 		summaryCharLimit: summaryCharLimit,
+		contextWindow:    contextWindow,
 	}
 }
 
