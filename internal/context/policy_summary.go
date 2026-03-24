@@ -50,10 +50,14 @@ func (p *SummaryPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 
 	accumulatedSummary := ""
 
-	// 计算被替换消息的总 token 数
+	// 计算被替换消息的总 token 数，并收集需要删除的 offload keys
 	removedTokens := 0
+	var removedKeys []string
 	for i := 0; i < summarizeUntilIndex; i++ {
 		removedTokens += engine.messages[i].Tokens
+		if engine.messages[i].OffloadKey != "" {
+			removedKeys = append(removedKeys, engine.messages[i].OffloadKey)
+		}
 	}
 
 	batchStart := 0
@@ -114,5 +118,6 @@ func (p *SummaryPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 	return PolicyResult{
 		Messages:      messages,
 		ContextTokens: engine.contextTokens - removedTokens + newTokens,
+		RemovedKeys:   removedKeys,
 	}, nil
 }

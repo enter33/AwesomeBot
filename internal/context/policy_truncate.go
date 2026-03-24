@@ -50,13 +50,18 @@ func (p *TruncatePolicy) Apply(ctx context.Context, engine *Engine) (PolicyResul
 	}
 
 	removedTokens := 0
+	var removedKeys []string
 	for i := 0; i < removeIdx; i++ {
 		removedTokens += engine.messages[i].Tokens
+		if engine.messages[i].OffloadKey != "" {
+			removedKeys = append(removedKeys, engine.messages[i].OffloadKey)
+		}
 	}
 
 	return PolicyResult{
 		Messages:      engine.messages[removeIdx:],
 		ContextTokens: engine.contextTokens - removedTokens,
+		RemovedKeys:   removedKeys,
 	}, nil
 }
 

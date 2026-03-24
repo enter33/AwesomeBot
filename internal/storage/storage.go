@@ -6,6 +6,7 @@ import "context"
 type Storage interface {
 	Load(ctx context.Context, key string) (string, error)
 	Store(ctx context.Context, key string, value string) error
+	Delete(ctx context.Context, key string) error
 }
 
 // MemoryStorage 内存存储
@@ -26,5 +27,10 @@ func (s *MemoryStorage) Load(ctx context.Context, key string) (string, error) {
 
 func (s *MemoryStorage) Store(ctx context.Context, key string, value string) error {
 	s.data[key] = value
+	return nil
+}
+
+func (s *MemoryStorage) Delete(ctx context.Context, key string) error {
+	delete(s.data, key)
 	return nil
 }

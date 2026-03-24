@@ -39,3 +39,9 @@ func (fs *FileSystemStorage) Load(ctx context.Context, key string) (string, erro
 	}
 	return string(content), nil
 }
+
+// Delete 删除数据
+func (fs *FileSystemStorage) Delete(ctx context.Context, key string) error {
+	filePath := filepath.Clean(filepath.Join(fs.baseDir, key))
+	return os.Remove(filePath)
+}

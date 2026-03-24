@@ -94,7 +94,7 @@ func (p *OffloadPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 
 		// 计算新消息的 token 数并更新计数
 		newTokens := CountTokens(newMessage)
-		messages[i] = messageWrap{Message: newMessage, Tokens: newTokens}
+		messages[i] = messageWrap{Message: newMessage, Tokens: newTokens, OffloadKey: key}
 		contextTokens -= oldTokens - newTokens
 	}
 

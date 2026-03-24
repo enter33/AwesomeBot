@@ -6,6 +6,7 @@ import "context"
 type PolicyResult struct {
 	Messages      []messageWrap // 新的消息列表
 	ContextTokens int           // 新的 context token 计数
+	RemovedKeys   []string      // 需要从 storage 中删除的 offload keys
 }
 
 // Policy 策略接口

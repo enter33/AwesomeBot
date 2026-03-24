@@ -112,7 +112,7 @@ func main() {
 	throttledUpdater := memory.NewThrottledMemoryUpdater(conditionalUpdater, awesomeConfig.MemoryUpdateThreshold)
 	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, throttledUpdater)
 
-	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies, contextWindow)
+	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies, contextWindow, memoryStorage)
 
 	// 配置需要确认的工具
 	confirmConfig := agent.ToolConfirmConfig{

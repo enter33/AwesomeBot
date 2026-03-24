@@ -3,6 +3,7 @@ package context
 import (
 	"context"
 	"fmt"
+	"log"
 	"runtime"
 	"strings"
 
@@ -10,12 +11,14 @@ import (
 
 	"github.com/enter33/AwesomeBot/internal/memory"
 	"github.com/enter33/AwesomeBot/internal/skill"
+	"github.com/enter33/AwesomeBot/internal/storage"
 	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
 type messageWrap struct {
-	Message config.OpenAIMessage
-	Tokens  int
+	Message    config.OpenAIMessage
+	Tokens     int
+	OffloadKey string // 如果这条消息是从 offload 恢复的，记录其 key
 }
 
 // Engine 上下文引擎
@@ -27,6 +30,7 @@ type Engine struct {
 	onMemoryEvent        func(running bool, err error)
 	contextTokens        int
 	contextWindow        int
+	offloadStorage       storage.Storage
 
 	memory       memory.Memory
 	skillManager SkillManager
@@ -53,7 +57,7 @@ type SkillManager interface {
 }
 
 // NewContextEngine 创建上下文引擎
-func NewContextEngine(mem memory.Memory, policies []Policy, contextWindow int) *Engine {
+func NewContextEngine(mem memory.Memory, policies []Policy, contextWindow int, offloadStorage storage.Storage) *Engine {
 	skillManager := skill.NewManager()
 	_ = skillManager.LoadAll()
 	return &Engine{
@@ -62,6 +66,7 @@ func NewContextEngine(mem memory.Memory, policies []Policy, contextWindow int) *
 		contextWindow: contextWindow,
 		memory:        mem,
 		skillManager:  skillManager,
+		offloadStorage: offloadStorage,
 	}
 }
 
@@ -150,6 +155,8 @@ func (c *Engine) recountTokens() {
 }
 
 func (c *Engine) applyPolicies(ctx context.Context) error {
+	var allRemovedKeys []string
+
 	for _, policy := range c.policies {
 		if !policy.ShouldApply(ctx, c) {
 			continue
@@ -164,9 +171,19 @@ func (c *Engine) applyPolicies(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("apply policy %s: %w", policy.Name(), err)
 		}
+
+		allRemovedKeys = append(allRemovedKeys, result.RemovedKeys...)
 		c.messages = result.Messages
 		c.recountTokens()
 	}
+
+	// 清理不再需要的 offload 内容
+	for _, key := range allRemovedKeys {
+		if err := c.offloadStorage.Delete(ctx, key); err != nil {
+			log.Printf("failed to delete offload key %s: %v", key, err)
+		}
+	}
+
 	return nil
 }
 
