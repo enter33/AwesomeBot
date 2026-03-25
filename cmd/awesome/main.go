@@ -139,7 +139,6 @@ func main() {
 		tool.NewEditToolWithResolver(pathResolver),
 		tool.NewListDirToolWithResolver(pathResolver),
 		tool.CreateBashTool(workspaceDir),
-		tool.NewLoadStorageTool(offloadStorage),
 		tool.NewLoadSkillTool(),
 	}
 

@@ -15,6 +15,9 @@ func checkDockerAvailable() bool {
 func CreateBashTool(workspaceDir string) Tool {
 	if !checkDockerAvailable() {
 		log.Printf("Docker not available, using regular bash tool")
+		if workspaceDir != "" {
+			return NewBashToolWithWorkspace(workspaceDir)
+		}
 		return NewBashTool()
 	}
 	if workspaceDir == "" {
@@ -23,5 +26,5 @@ func CreateBashTool(workspaceDir string) Tool {
 	}
 	containerName := generateContainerName(workspaceDir)
 	log.Printf("Docker available, using DockerBashTool with sandbox container '%s'", containerName)
-	return NewDockerBashTool("", workspaceDir)
+	return NewDockerBashTool(containerName, workspaceDir)
 }

@@ -10,15 +10,14 @@ import (
 type AgentTool = string
 
 const (
-	AgentToolRead        AgentTool = "read"
-	AgentToolWrite       AgentTool = "write"
-	AgentToolEdit        AgentTool = "edit"
-	AgentToolList        AgentTool = "list"
-	AgentToolBash        AgentTool = "bash"
-	AgentToolLoadStorage AgentTool = "load_storage"
-	AgentToolLoadSkill   AgentTool = "load_skill"
-	AgentToolWebSearch   AgentTool = "web_search"
-	AgentToolWebFetch    AgentTool = "web_fetch"
+	AgentToolRead      AgentTool = "read"
+	AgentToolWrite     AgentTool = "write"
+	AgentToolEdit      AgentTool = "edit"
+	AgentToolList      AgentTool = "list"
+	AgentToolBash      AgentTool = "bash"
+	AgentToolLoadSkill AgentTool = "load_skill"
+	AgentToolWebSearch AgentTool = "web_search"
+	AgentToolWebFetch  AgentTool = "web_fetch"
 )
 
 // Tool 工具接口
