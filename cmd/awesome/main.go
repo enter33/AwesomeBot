@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"os"
+	"path/filepath"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/joho/godotenv"
@@ -94,12 +97,15 @@ func main() {
 		contextWindow = config.DefaultContextWindow
 	}
 
+	// 生成唯一实例 ID: YYYYMMDD_HHMMSS_ffffff
+	instanceID := time.Now().Format("20060102_150405") + "_" + fmt.Sprintf("%06d", rand.Intn(1000000))
+
 	// 创建上下文引擎和 policy
-	memoryStorage := storage.NewMemoryStorage()
+	offloadStorage := storage.NewFileSystemStorage(filepath.Join(config.GetAwesomeDir(), "offload", instanceID))
 	summarizer := ctxengine.NewLLMSummarizer(llmConfig, 200, contextWindow)
 
 	policies := []ctxengine.Policy{
-		ctxengine.NewOffloadPolicy(memoryStorage, 0.4, 0, 100),
+		ctxengine.NewOffloadPolicy(offloadStorage, 0.4, 0, 100, instanceID),
 		ctxengine.NewSummaryPolicy(summarizer, 10, 20, 0.6),
 		ctxengine.NewTruncatePolicy(0, 0.85),
 	}
@@ -112,7 +118,7 @@ func main() {
 	throttledUpdater := memory.NewThrottledMemoryUpdater(conditionalUpdater, awesomeConfig.MemoryUpdateThreshold)
 	multiLevelMemory := memory.NewMultiLevelMemory(homeStorage, workspaceStorage, throttledUpdater)
 
-	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies, contextWindow, memoryStorage)
+	contextEngine := ctxengine.NewContextEngine(multiLevelMemory, policies, contextWindow, offloadStorage)
 
 	// 配置需要确认的工具
 	confirmConfig := agent.ToolConfirmConfig{
@@ -133,7 +139,7 @@ func main() {
 		tool.NewEditToolWithResolver(pathResolver),
 		tool.NewListDirToolWithResolver(pathResolver),
 		tool.CreateBashTool(workspaceDir),
-		tool.NewLoadStorageTool(memoryStorage),
+		tool.NewLoadStorageTool(offloadStorage),
 		tool.NewLoadSkillTool(),
 	}
 
@@ -171,6 +177,12 @@ func main() {
 
 	// 丢弃标准库的日志输出
 	log.SetOutput(io.Discard)
+
+	// 进程退出时清理实例的 offload 目录
+	defer func() {
+		instanceOffloadDir := filepath.Join(config.GetAwesomeDir(), "offload", instanceID)
+		os.RemoveAll(instanceOffloadDir)
+	}()
 
 	// 创建 TUI
 	tuiModel := tui.NewModel(codingAgent, llmConfig.Model, version)

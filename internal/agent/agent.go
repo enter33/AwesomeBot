@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"math/rand"
+	// "math/rand"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -149,15 +149,8 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 	var usage openai.CompletionUsage
 	var totalTokens int
 
-	for attempt := 0; attempt <= maxLLMRetries; attempt++ {
-		if attempt > 0 {
-			logging.Info("LLM 调用失败，准备重试 (attempt %d/%d)", attempt, maxLLMRetries)
-			// 指数退避: 1s, 2s, 4s
-			sleepDuration := time.Duration(1<<(attempt-1)) * time.Second
-			// 添加随机抖动 (0-1s)
-			sleepDuration += time.Duration(rand.Intn(1000)) * time.Millisecond
-			time.Sleep(sleepDuration)
-		}
+	attempt := 0
+	for attempt <= maxLLMRetries {
 		params := openai.ChatCompletionNewParams{
 			Model:    a.model,
 			Messages: messages,
@@ -226,21 +219,13 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 		}
 		if err := stream.Err(); err != nil {
 			logging.Error("LLM 流式响应错误: %v", err)
-			viewCh <- MessageVO{
-				Type:    MessageTypeError,
-				Content: config.Ptr(err.Error()),
-			}
-			if attempt < maxLLMRetries {
-				continue
-			}
-			return err
+			attempt ++
+			continue
 		}
 		if len(acc.Choices) == 0 {
 			logging.Warn("LLM 返回为空")
-			if attempt < maxLLMRetries {
-				continue
-			}
-			return nil
+			attempt ++
+			continue
 		}
 		totalTokens = int(usage.TotalTokens)
 		message := acc.Choices[0].Message
@@ -357,6 +342,13 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 		default:
 		}
 
+	}
+	if attempt > maxLLMRetries {
+		viewCh <- MessageVO{
+			Type:    MessageTypeError,
+			Content: config.Ptr("达到最大重试次数，任务未能完成"),
+		}
+		logging.Error("达到最大重试次数 %d，LLM 任务未能完成", maxLLMRetries)
 	}
 
 	err := a.contextEngine.CommitTurn(ctx, draft, ctxengine.Usage{PromptTokens: int(usage.TotalTokens)}, false)

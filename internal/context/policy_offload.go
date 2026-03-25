@@ -22,14 +22,17 @@ type OffloadPolicy struct {
 	KeepRecentMessages int
 	// PreviewCharLimit 表示卸载后在上下文里保留的字符数。
 	PreviewCharLimit int
+	// InstanceID 实例唯一标识，用于隔离多 CLI 并发
+	InstanceID string
 }
 
-func NewOffloadPolicy(storage storage.Storage, usageThreshold float64, keepRecentMessages, previewCharLimit int) *OffloadPolicy {
+func NewOffloadPolicy(storage storage.Storage, usageThreshold float64, keepRecentMessages, previewCharLimit int, instanceID string) *OffloadPolicy {
 	return &OffloadPolicy{
 		Storage:            storage,
 		UsageThreshold:     usageThreshold,
 		KeepRecentMessages: keepRecentMessages,
 		PreviewCharLimit:   previewCharLimit,
+		InstanceID:         instanceID,
 	}
 }
 
@@ -38,7 +41,7 @@ func (p *OffloadPolicy) Name() string {
 }
 
 func (p *OffloadPolicy) makeStorageKey(offloadIndex int) string {
-	return fmt.Sprintf("/offload/%s_%d", time.Now().Format("20060102_150405"), offloadIndex)
+	return fmt.Sprintf("/offload/%s/%s_%d", p.InstanceID, time.Now().Format("20060102_150405"), offloadIndex)
 }
 
 func (p *OffloadPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult, error) {
@@ -86,7 +89,8 @@ func (p *OffloadPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 		var b strings.Builder
 		b.WriteString(abstract)
 		b.WriteString("...")
-		b.WriteString(fmt.Sprintf("（更多内容已卸载，如需查看全文请使用 load_storage(key=\"%s\") 工具）\n", key))
+		offloadPath := fmt.Sprintf("%s/%s", config.GetAwesomeDir(), key)
+		b.WriteString(fmt.Sprintf("（更多内容已卸载到文件 %s，如需查看全文请使用 read 工具读取该路径）\n", offloadPath))
 		newContent := b.String()
 
 		// 修改原始消息链中的消息

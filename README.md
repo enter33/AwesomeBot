@@ -553,6 +553,22 @@ awesomebot/
 - `@modelcontextprotocol/server-memory` - 内存服务器
 - `@modelcontextprotocol/server-github` - GitHub API
 
+## 更新日志
+
+### v1.1.0
+
+**Bug 修复：**
+- 修复 Offload 内存在 Policy 执行后不释放的问题
+- 修复 LLM 流式响应错误重试时未向 TUI 发送错误提示的问题
+
+**改进：**
+- 优化重试逻辑：达到最大重试次数时向 TUI 发送明确错误提示，避免任务静默中断
+
+### v1.0.0
+
+- 初始版本
+- 流式响应、上下文管理、记忆系统、工具调用、MCP 集成
+
 ## 版权
 
 MIT License

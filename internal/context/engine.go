@@ -224,6 +224,12 @@ func (c *Engine) BuildSystemPrompt() string {
 
 // Reset 重置（清空所有消息，保留 system prompt）
 func (c *Engine) Reset() {
+	// 清理所有 offload 文件
+	for _, msg := range c.messages {
+		if msg.OffloadKey != "" {
+			c.offloadStorage.Delete(context.Background(), msg.OffloadKey)
+		}
+	}
 	c.messages = make([]messageWrap, 0)
 	c.contextTokens = 0
 }

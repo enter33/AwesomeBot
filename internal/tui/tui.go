@@ -370,26 +370,15 @@ func (m *TuiViewModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiViewModel) handleStreamDone(msg streamDoneMsg) (tea.Model, tea.Cmd) {
-	if m.active == nil {
-		m.state = stateIdle
-		return m, nil
-	}
-
 	m.stopActiveStream()
-	if m.state == stateAborting {
-		// 不回滚，保留消息
-		m.logs = append(m.logs, NewNotice("用户取消了 agent loop，消息已保留。"))
-		m.state = stateIdle
-		m.refreshLogsViewportContent()
-		return m, nil
-	}
+	m.state = stateIdle
+	m.refreshLogsViewportContent()
 
 	if msg.err != nil {
 		m.logs = append(m.logs, NewError(msg.err.Error()))
 	}
 	m.logs = append(m.logs, NewBorder())
-	m.state = stateIdle
-	m.refreshLogsViewportContent()
+
 	return m, nil
 }
 
@@ -438,6 +427,8 @@ func (m *TuiViewModel) abortCurrentTurn() {
 		return
 	}
 	m.state = stateAborting
+	m.logs = append(m.logs, NewNotice("用户取消了 agent loop，消息已保留。"))
+	m.refreshLogsViewportContent()
 	m.active.cancel()
 }
 
