@@ -37,6 +37,10 @@ func (p *SummaryPolicy) ShouldApply(ctx context.Context, engine *Engine) bool {
 	return engine.GetContextUsage() > p.UsageThreshold
 }
 
+func (p *SummaryPolicy) CanApplyDuringToolLoop() bool {
+	return false // Summary 需要 LLM 调用，必须在循环结束后执行以保证原子性
+}
+
 func (p *SummaryPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult, error) {
 	if len(engine.messages) <= p.KeepRecentMessages {
 		return PolicyResult{

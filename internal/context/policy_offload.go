@@ -111,3 +111,7 @@ func (p *OffloadPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 func (p *OffloadPolicy) ShouldApply(ctx context.Context, engine *Engine) bool {
 	return engine.GetContextUsage() > p.UsageThreshold
 }
+
+func (p *OffloadPolicy) CanApplyDuringToolLoop() bool {
+	return true // Offload 只替换内容，不改变消息结构，原子性安全
+}

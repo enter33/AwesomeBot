@@ -187,6 +187,26 @@ func (c *Engine) applyPolicies(ctx context.Context) error {
 	return nil
 }
 
+// MaybeApplySafePoliciesDuringToolLoop 在工具执行循环中调用
+// 只执行 CanApplyDuringToolLoop() == true 的 Policy（目前只有 OffloadPolicy）
+func (c *Engine) MaybeApplySafePoliciesDuringToolLoop(ctx context.Context) error {
+	for _, policy := range c.policies {
+		if !policy.CanApplyDuringToolLoop() {
+			continue
+		}
+		if !policy.ShouldApply(ctx, c) {
+			continue
+		}
+		result, err := policy.Apply(ctx, c)
+		if err != nil {
+			return fmt.Errorf("apply safe policy %s during tool loop: %w", policy.Name(), err)
+		}
+		c.messages = result.Messages
+		c.recountTokens()
+	}
+	return nil
+}
+
 // SetPolicyEventHook 设置策略事件钩子
 func (c *Engine) SetPolicyEventHook(hook func(policyName string, running bool, err error)) {
 	c.onPolicyEvent = hook

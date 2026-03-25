@@ -68,3 +68,7 @@ func (p *TruncatePolicy) Apply(ctx context.Context, engine *Engine) (PolicyResul
 func (p *TruncatePolicy) ShouldApply(ctx context.Context, engine *Engine) bool {
 	return engine.GetContextUsage() > p.UsageThreshold
 }
+
+func (p *TruncatePolicy) CanApplyDuringToolLoop() bool {
+	return false // Truncate 会删除消息，必须在循环结束后执行以保证原子性
+}

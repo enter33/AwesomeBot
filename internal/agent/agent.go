@@ -340,6 +340,10 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			_ = a.contextEngine.CommitTurn(ctx, draft, ctxengine.Usage{PromptTokens: int(usage.TotalTokens)}, true)
 			return nil
 		default:
+			// 增量压缩：只执行安全的 Policy（OffloadPolicy）
+			if err := a.contextEngine.MaybeApplySafePoliciesDuringToolLoop(ctx); err != nil {
+				logging.Error("增量压缩失败: %v", err)
+			}
 		}
 
 	}
