@@ -9,7 +9,7 @@
 - **两级记忆**: Global + Workspace 记忆系统，跨会话和当前目录持久化
 - **内置工具**: bash（支持 Docker 沙箱）、read（分页/行号）、write、edit（智能匹配）、list（递归列表）、web_search、web_fetch、load_skill、load_storage
 - **Web 工具**: web_search（网络搜索）、web_fetch（网页内容提取），支持多种 provider
-- **MCP 集成**: 支持 Model Context Protocol，可连接多种 MCP 服务器
+- **MCP 集成**: 支持 Model Context Protocol，可连接多种 MCP 服务器，Schema 延迟加载减少初始 token 消耗
 - **技能系统**: 可扩展的技能加载机制，通过 SKILL.md 定义复杂技能
 - **工具确认**: 危险操作（bash/write）需要用户确认，可选择"始终允许"
 - **日志系统**: 完整运行日志，支持日志轮转，调试友好
@@ -101,6 +101,18 @@ go run ./cmd/awesome/
 | `args` | string[] | 命令参数 |
 | `env` | map | 环境变量 |
 | `url` | string | HTTP MCP 服务器地址（替代 command/args） |
+
+#### MCP Schema 延迟加载
+
+MCP 工具采用延迟加载策略以减少初始 token 消耗：
+
+- **初始**: 所有 MCP 工具只发送名称和描述（不含 schema）
+- **按需获取**: LLM 需要使用某个 MCP 工具时，先调用 `get_mcp_tool_schema` 获取完整参数 schema
+- **工具命名**: MCP 工具名称格式为 `awesomebot_mcp__<server>__<tool>`
+
+示例流程：
+1. LLM 调用 `get_mcp_tool_schema(server="filesystem", tool="read_file")` 获取参数 schema
+2. LLM 根据 schema 组织参数，调用 `awesomebot_mcp__filesystem__read_file`
 
 ### Web 搜索配置
 
@@ -476,7 +488,8 @@ awesomebot/
 │   ├── security/               # 安全模块
 │   │   └── network.go          # SSRF 保护
 │   ├── mcp/                     # MCP 客户端
-│   │   └── client.go           # MCP 客户端实现
+│   │   ├── client.go           # MCP 客户端实现
+│   │   └── schema_tool.go      # MCP Schema 延迟加载工具
 │   ├── skill/                   # 技能系统
 │   │   ├── skill.go            # 技能数据结构
 │   │   └── load.go             # 技能加载逻辑
@@ -554,6 +567,11 @@ awesomebot/
 - `@modelcontextprotocol/server-github` - GitHub API
 
 ## 更新日志
+
+### v1.2.0
+
+**新功能：**
+- MCP 工具 Schema 延迟加载：初始只发送工具名称和描述，按需获取完整 schema，减少 token 消耗
 
 ### v1.1.0
 

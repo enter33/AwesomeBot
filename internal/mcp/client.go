@@ -140,7 +140,10 @@ func (t *McpTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Description: openai.String(t.mcpTool.Description),
 		Name:        t.ToolName(),
-		Parameters:  t.mcpTool.InputSchema.(map[string]any),
+		Parameters: openai.FunctionParameters{
+			"type": "object",
+			// 初始不提供 properties，让 LLM 通过 get_mcp_tool_schema 获取
+		},
 	})
 }
 

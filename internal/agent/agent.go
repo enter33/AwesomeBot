@@ -32,6 +32,7 @@ type Agent struct {
 	contextEngine   *ctxengine.Engine
 	nativeTools     map[tool.AgentTool]tool.Tool
 	mcpClients      map[string]*mcp.Client
+	getSchemaTool   *mcp.GetSchemaTool
 }
 
 // NewAgent 创建 Agent 实例
@@ -63,6 +64,7 @@ func NewAgent(
 	for _, mcpClient := range mcpClients {
 		a.mcpClients[mcpClient.Name()] = mcpClient
 	}
+	a.getSchemaTool = mcp.NewGetSchemaTool(mcpClients)
 
 	return &a
 }
@@ -79,6 +81,9 @@ func (a *Agent) findTool(toolName string) (tool.Tool, bool) {
 			}
 		}
 	}
+	if toolName == a.getSchemaTool.ToolName() {
+		return a.getSchemaTool, true
+	}
 	return nil, false
 }
 
@@ -88,12 +93,14 @@ func (a *Agent) buildTools() []openai.ChatCompletionToolUnionParam {
 	for _, t := range a.nativeTools {
 		tools = append(tools, t.Info())
 	}
-	// 集成 mcp tools
+	// 集成 mcp tools (不含 schema)
 	for _, mcpClient := range a.mcpClients {
 		for _, t := range mcpClient.GetTools() {
 			tools = append(tools, t.Info())
 		}
 	}
+	// 新增 schema 获取工具
+	tools = append(tools, a.getSchemaTool.Info())
 	return tools
 }
 
