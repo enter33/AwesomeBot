@@ -33,6 +33,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: true
 
       - name: Build
         run: go build -ldflags="-s -w" -o ${{ matrix.output_name }} ./cmd/awesome/
