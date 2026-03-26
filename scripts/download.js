@@ -49,12 +49,13 @@ const tempFile = path.join(tempDir, artifactName);
 
 try {
   if (isWindows) {
-    // Windows: 使用 PowerShell
-    const psCmd = `powershell -command "Invoke-WebRequest -Uri '${downloadUrl}' -OutFile '${tempFile}'"`;
+    // Windows: 使用完整路径调用 PowerShell
+    const psPath = `C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    const psCmd = `"${psPath}" -command "Invoke-WebRequest -Uri '${downloadUrl}' -OutFile '${tempFile}'"`;
     execSync(psCmd, { stdio: 'inherit' });
 
     // 解压
-    const extractCmd = `powershell -command "Expand-Archive -Path '${tempFile}' -Destination '${binDir}' -Force"`;
+    const extractCmd = `"${psPath}" -command "Expand-Archive -Path '${tempFile}' -Destination '${binDir}' -Force"`;
     execSync(extractCmd, { stdio: 'inherit' });
   } else {
     // Unix: 使用 curl
