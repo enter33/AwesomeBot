@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+const { spawn } = require('child_process');
+const path = require('path');
+const os = require('os');
+
+// 检测平台
+const platform = os.platform();
+const binName = platform === 'win32' ? 'awesome-bot.exe' : 'awesome-bot';
+
+// 当前脚本所在目录
+const scriptDir = path.resolve(__dirname, '..');
+const binPath = path.join(scriptDir, binName);
+
+// 直接 spawn 二进制，透传所有参数
+const child = spawn(binPath, process.argv.slice(2), {
+  stdio: 'inherit',
+  shell: platform === 'win32'
+});
+
+child.on('exit', (code) => {
+  process.exit(code);
+});
