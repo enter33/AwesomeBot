@@ -121,6 +121,7 @@ func (m *TuiViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.syncLogsViewportSize()
+		m.refreshLogsViewportContentAfterResize()
 		return m, nil
 	case tea.MouseWheelMsg:
 		switch msg.Button {
@@ -285,7 +286,7 @@ func (m *TuiViewModel) handleStreamEvent(event agent.MessageVO) {
 		if m.active.reasonBody == -1 {
 			m.logs = append(m.logs, NewReasoning(*event.ReasoningContent))
 			m.active.reasonBody = len(m.logs) - 1
-		} else {
+		} else if m.active.reasonBody >= 0 && m.active.reasonBody < len(m.logs) {
 			m.logs[m.active.reasonBody].AppendContent(*event.ReasoningContent)
 		}
 	case agent.MessageTypeContent:
@@ -295,7 +296,7 @@ func (m *TuiViewModel) handleStreamEvent(event agent.MessageVO) {
 		if m.active.contentBody == -1 {
 			m.logs = append(m.logs, NewAnswer(*event.Content))
 			m.active.contentBody = len(m.logs) - 1
-		} else {
+		} else if m.active.contentBody >= 0 && m.active.contentBody < len(m.logs) {
 			m.logs[m.active.contentBody].AppendContent(*event.Content)
 		}
 	case agent.MessageTypeToolCall:
@@ -517,17 +518,26 @@ func (m *TuiViewModel) refreshLogsViewportContent() {
 		lines[i] = entry.Render()
 	}
 	m.logsViewport.SetContent(strings.Join(lines, "\n\n"))
-	if !atBottom {
+	if atBottom {
 		m.logsViewport.GotoBottom()
-		return
+	} else {
+		m.logsViewport.SetYOffset(offset)
 	}
-	m.logsViewport.SetYOffset(offset)
+}
+
+// refreshLogsViewportContentAfterResize 在窗口大小变化后刷新 viewport 内容
+// 窗口大小变化后，直接跳转到底部以确保内容可见
+func (m *TuiViewModel) refreshLogsViewportContentAfterResize() {
+	lines := make([]string, len(m.logs))
+	for i, entry := range m.logs {
+		lines[i] = entry.Render()
+	}
+	m.logsViewport.SetContent(strings.Join(lines, "\n\n"))
+	m.logsViewport.GotoBottom()
 }
 
 func (m *TuiViewModel) View() tea.View {
 	var b strings.Builder
-
-	m.syncLogsViewportSize()
 
 	b.WriteString(titleStyle.Render("AwesomeBot TUI (Bubble Tea)"))
 	b.WriteString("\n")
