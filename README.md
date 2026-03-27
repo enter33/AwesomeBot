@@ -7,7 +7,8 @@
 - **流式响应**: LLM 流式输出，实时显示推理过程（reasoning content）
 - **上下文管理**: 智能上下文策略（摘要、卸载、截断），自动维护上下文长度
 - **两级记忆**: Global + Workspace 记忆系统，跨会话和当前目录持久化
-- **内置工具**: bash（支持 Docker 沙箱）、read（分页/行号）、write、edit（智能匹配）、list（递归列表）、web_search、web_fetch、load_skill、load_storage
+- **内置工具**: bash（支持 Docker 沙箱）、read（分页/行号）、write、edit（智能匹配）、list（递归列表）、web_search、web_fetch、load_skill、load_storage、spawn（创建子代理）、get_subagent_result、send_message
+- **子代理系统**: 支持创建后台运行的子代理，并行处理复杂任务
 - **Web 工具**: web_search（网络搜索）、web_fetch（网页内容提取），支持多种 provider
 - **MCP 集成**: 支持 Model Context Protocol，可连接多种 MCP 服务器，Schema 延迟加载减少初始 token 消耗
 - **技能系统**: 可扩展的技能加载机制，通过 SKILL.md 定义复杂技能
@@ -220,6 +221,7 @@ OPENAI_API_KEY=sk-xxx
 | `Esc` | 取消当前流式响应 / 拒绝工具调用 |
 | `Ctrl+C` | 退出程序 |
 | `/clear` | 清空会话（保留 system prompt） |
+| `Ctrl+S` | 显示/隐藏子代理面板 |
 
 ### 工具确认
 
@@ -261,6 +263,9 @@ TUI 会实时显示以下类型的消息：
 | `web_fetch` | 抓取网页内容 | 否 |
 | `load_skill` | 加载技能指令 | 否 |
 | `load_storage` | 加载存储内容 | 否 |
+| `spawn` | 创建子代理（后台运行） | 否 |
+| `get_subagent_result` | 获取子代理执行结果 | 否 |
+| `send_message` | 向子代理发送消息 | 否 |
 
 ### Bash 工具模式
 
@@ -429,6 +434,46 @@ description: 执行代码审查，检查潜在问题和改进建议
 | `name` | 技能显示名称 |
 | `description` | 技能描述，用于 Agent 判断何时加载 |
 
+## 子代理系统
+
+子代理允许创建独立的后台任务执行单元，实现并行处理复杂任务。
+
+### 子代理类型
+
+| 类型 | 说明 |
+|------|------|
+| `general-purpose` | 通用子代理，适合大多数任务 |
+| `explore` | 探索型子代理，适合代码搜索和探索 |
+| `plan` | 规划型子代理，适合任务分解和规划 |
+
+### 子代理生命周期
+
+1. **创建**: 使用 `spawn` 工具创建子代理，指定类型和任务
+2. **运行**: 子代理在后台独立运行，不阻塞主对话
+3. **查询**: 使用 `get_subagent_result` 获取执行结果
+4. **通信**: 使用 `send_message` 向运行中的子代理发送消息
+
+### 子代理状态
+
+| 状态 | 说明 |
+|------|------|
+| `created` | 已创建，等待启动 |
+| `running` | 正在运行 |
+| `completed` | 已完成 |
+| `failed` | 执行失败 |
+| `stopped` | 已停止 |
+
+### TUI 子代理面板
+
+按 `Ctrl+S` 可显示/隐藏子代理面板，实时查看所有子代理的状态：
+
+```
+--- Subagents ---
+● [explore] search-agent (running)
+✓ [general-purpose] file-reader (completed)
+✗ [plan] task-planner (failed)
+```
+
 ## 日志系统
 
 ### 日志位置
@@ -496,6 +541,12 @@ awesomebot/
 │   ├── skill/                   # 技能系统
 │   │   ├── skill.go            # 技能数据结构
 │   │   └── load.go             # 技能加载逻辑
+│   ├── subagent/                # 子代理系统
+│   │   ├── subagent.go         # 子代理接口定义
+│   │   ├── manager.go          # 子代理管理器
+│   │   └── instance.go         # 子代理实例实现
+│   ├── msgs/                    # 消息类型定义
+│   │   └── types.go            # 消息 VO 类型
 │   ├── storage/                 # 存储抽象
 │   │   └── filesystem.go       # 文件系统存储
 │   ├── tool/                    # 工具实现
@@ -510,10 +561,13 @@ awesomebot/
 │   │   ├── web_fetch.go        # Web 抓取工具
 │   │   ├── web_helpers.go      # Web 工具辅助函数
 │   │   ├── factory.go          # 工具工厂
-│   │   └── ...
+│   │   ├── spawn.go            # 子代理创建工具
+│   │   ├── get_result.go       # 获取子代理结果工具
+│   │   └── send_message.go     # 发送消息到子代理工具
 │   ├── tui/                     # TUI 界面
 │   │   ├── tui.go              # TUI 主逻辑
-│   │   └── entry.go            # 日志条目渲染
+│   │   ├── entry.go            # 日志条目渲染
+│   │   └── subagent_panel.go   # 子代理面板渲染
 │   └── logging/                 # 日志系统
 │       └── logger.go           # 日志实现
 ├── pkg/
@@ -570,6 +624,20 @@ awesomebot/
 - `@modelcontextprotocol/server-github` - GitHub API
 
 ## 更新日志
+
+### v1.3.0
+
+**新功能：**
+
+- **子代理系统 (Subagent)**: 支持创建后台运行的子代理，实现并行任务处理
+  - 支持三种子代理类型：`general-purpose`、`explore`、`plan`
+  - 新增工具：`spawn`（创建子代理）、`get_subagent_result`（获取结果）、`send_message`（发送消息）
+  - TUI 子代理面板：按 `Ctrl+S` 显示/隐藏，实时查看子代理状态
+  - 子代理生命周期管理：创建、运行、完成、失败、停止
+
+**代码重构：**
+
+- 消息类型定义迁移到 `internal/msgs` 包，实现更好的模块解耦
 
 ### v1.2.1
 

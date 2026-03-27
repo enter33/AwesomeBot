@@ -131,5 +131,13 @@ func (e *LogEntry) Render() string {
 	if e.Title == "" {
 		return e.Style.Render(e.Content)
 	}
+	// 如果内容为空，只返回标题，避免显示 "回答: " 这样的空块
+	if e.Content == "" {
+		return ""
+	}
+	// 再次检查处理后的内容是否为空（可能原本只有换行符或空格）
+	if strings.TrimSpace(e.Content) == "" {
+		return ""
+	}
 	return e.Style.Render(e.Title + ": " + e.Content)
 }

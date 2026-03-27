@@ -293,6 +293,10 @@ func (m *TuiViewModel) handleStreamEvent(event agent.MessageVO) {
 		if event.Content == nil {
 			return
 		}
+		// 如果内容为空，不创建回答块
+		if *event.Content == "" {
+			return
+		}
 		if m.active.contentBody == -1 {
 			m.logs = append(m.logs, NewAnswer(*event.Content))
 			m.active.contentBody = len(m.logs) - 1
@@ -513,11 +517,14 @@ func (m *TuiViewModel) syncLogsViewportSize() {
 func (m *TuiViewModel) refreshLogsViewportContent() {
 	atBottom := m.logsViewport.AtBottom()
 	offset := m.logsViewport.YOffset()
-	lines := make([]string, len(m.logs))
-	for i, entry := range m.logs {
-		lines[i] = entry.Render()
+	lines := make([]string, 0, len(m.logs))
+	for _, entry := range m.logs {
+		rendered := strings.TrimSpace(entry.Render())
+		if rendered != "" {
+			lines = append(lines, rendered)
+		}
 	}
-	m.logsViewport.SetContent(strings.Join(lines, "\n\n"))
+	m.logsViewport.SetContent(strings.Join(lines, "\n"))
 	if atBottom {
 		m.logsViewport.GotoBottom()
 	} else {
@@ -528,11 +535,14 @@ func (m *TuiViewModel) refreshLogsViewportContent() {
 // refreshLogsViewportContentAfterResize 在窗口大小变化后刷新 viewport 内容
 // 窗口大小变化后，直接跳转到底部以确保内容可见
 func (m *TuiViewModel) refreshLogsViewportContentAfterResize() {
-	lines := make([]string, len(m.logs))
-	for i, entry := range m.logs {
-		lines[i] = entry.Render()
+	lines := make([]string, 0, len(m.logs))
+	for _, entry := range m.logs {
+		rendered := strings.TrimSpace(entry.Render())
+		if rendered != "" {
+			lines = append(lines, rendered)
+		}
 	}
-	m.logsViewport.SetContent(strings.Join(lines, "\n\n"))
+	m.logsViewport.SetContent(strings.Join(lines, "\n"))
 	m.logsViewport.GotoBottom()
 }
 
