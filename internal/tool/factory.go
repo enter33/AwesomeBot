@@ -14,7 +14,7 @@ func checkDockerAvailable() bool {
 // CreateBashTool 创建 bash 工具，自动选择 DockerBashTool（如果 docker 可用）或常规 BashTool
 func CreateBashTool(workspaceDir string) Tool {
 	if !checkDockerAvailable() {
-		log.Printf("Docker not available, using regular bash tool")
+		// log.Printf("Docker not available, using regular bash tool")
 		if workspaceDir != "" {
 			return NewBashToolWithWorkspace(workspaceDir)
 		}

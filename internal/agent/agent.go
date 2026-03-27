@@ -345,6 +345,22 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			logging.Info("用户取消操作 (ESC)")
 			// 用户按 ESC，保存消息但不执行 policies/memory
 			_ = a.contextEngine.CommitTurn(ctx, draft, ctxengine.Usage{PromptTokens: int(usage.TotalTokens)}, true)
+			// 发送 token 用量
+			duration := time.Since(startTime).Seconds()
+			speed := 0.0
+			if duration > 0 && totalTokens > 0 {
+				speed = float64(totalTokens) / duration
+			}
+			viewCh <- MessageVO{
+				Type: MessageTypeTokenUsage,
+				TokenUsage: &TokenUsageVO{
+					PromptTokens:     int(usage.PromptTokens),
+					CompletionTokens: int(usage.CompletionTokens),
+					TotalTokens:      totalTokens,
+					Speed:            speed,
+					Duration:         duration,
+				},
+			}
 			return nil
 		default:
 		}

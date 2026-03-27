@@ -82,7 +82,7 @@ func NewModel(agent *agent.Agent, modelName, version string) *TuiViewModel {
 
 	return &TuiViewModel{
 		modelName:          modelName,
-		version:           version,
+		version:            version,
 		agent:              agent,
 		logs:               make([]LogEntry, 0),
 		logsViewport:       vp,
@@ -141,9 +141,7 @@ func (m *TuiViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamMsg:
 		return m.handleStreamMsg(msg)
 	case streamClosedMsg:
-		if m.active != nil {
-			m.active.events = nil
-		}
+		// channel 已关闭，等待 streamDoneMsg 到来
 		return m, nil
 	case streamDoneMsg:
 		return m.handleStreamDone(msg)
@@ -260,6 +258,21 @@ func (m *TuiViewModel) handleConfirmSelection() (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiViewModel) handleStreamEvent(event agent.MessageVO) {
+	// TokenUsage 消息在流结束时发送，即使 m.active 为 nil 也应该处理
+	if event.Type == agent.MessageTypeTokenUsage {
+		if event.TokenUsage != nil {
+			m.logs = append(m.logs, NewTokenUsage(
+				event.TokenUsage.PromptTokens,
+				event.TokenUsage.CompletionTokens,
+				event.TokenUsage.TotalTokens,
+				event.TokenUsage.Speed,
+				event.TokenUsage.Duration,
+			))
+			m.refreshLogsViewportContent()
+		}
+		return
+	}
+
 	if m.active == nil || m.state == stateAborting {
 		return
 	}
@@ -336,18 +349,6 @@ func (m *TuiViewModel) handleStreamEvent(event agent.MessageVO) {
 			m.active.memoryBody = -1
 		}
 		m.refreshLogsViewportContent()
-	case agent.MessageTypeTokenUsage:
-		if event.TokenUsage == nil {
-			return
-		}
-		m.logs = append(m.logs, NewTokenUsage(
-			event.TokenUsage.PromptTokens,
-			event.TokenUsage.CompletionTokens,
-			event.TokenUsage.TotalTokens,
-			event.TokenUsage.Speed,
-			event.TokenUsage.Duration,
-		))
-		m.refreshLogsViewportContent()
 	}
 }
 
@@ -361,6 +362,13 @@ func (m *TuiViewModel) resetOutputSection() {
 }
 
 func (m *TuiViewModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
+	// TokenUsage 消息即使在 m.active 为 nil 时也应该处理
+	if msg.event.Type == agent.MessageTypeTokenUsage {
+		m.handleStreamEvent(msg.event)
+		m.refreshLogsViewportContent()
+		return m, nil
+	}
+
 	if m.active == nil || m.active.events == nil {
 		return m, nil
 	}
@@ -387,7 +395,7 @@ func (m *TuiViewModel) startNewTurn(query string) (tea.Model, tea.Cmd) {
 	turnStart := len(m.logs)
 	m.logs = append(m.logs, NewContent(query))
 
-	streamC := make(chan agent.MessageVO)
+	streamC := make(chan agent.MessageVO, 10) // 有缓冲 channel，避免发送阻塞
 	confirmCh := make(chan agent.ConfirmationAction)
 	doneC := make(chan error)
 	ctx, cancel := context.WithCancel(context.Background())
