@@ -43,7 +43,7 @@ func (t *EditTool) ToolName() AgentTool {
 func (t *EditTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        string(AgentToolEdit),
-		Description: openai.String("edit a file by replacing old_text with new_text. Supports minor whitespace/line-ending differences. Set replace_all=true to replace every occurrence."),
+		Description: openai.String("Edit a file by replacing old_text with new_text.\n\nFeatures:\n- Smart matching (handles minor whitespace/line-ending differences)\n- Fuzzy matching when exact match fails\n- Shows best match suggestion if old_text not found\n- replace_all=true replaces every occurrence\n\nImportant:\n- old_text must uniquely identify the location (if multiple matches exist without replace_all, you'll be prompted)\n- For multiple identical changes, use replace_all=true\n- Preserves original line endings (LF/CRLF)"),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
@@ -53,7 +53,7 @@ func (t *EditTool) Info() openai.ChatCompletionToolUnionParam {
 				},
 				"old_text": map[string]any{
 					"type":        "string",
-					"description": "the text to find and replace",
+					"description": "the text to find and replace (must be unique within file, or use replace_all)",
 				},
 				"new_text": map[string]any{
 					"type":        "string",
@@ -61,7 +61,7 @@ func (t *EditTool) Info() openai.ChatCompletionToolUnionParam {
 				},
 				"replace_all": map[string]any{
 					"type":        "boolean",
-					"description": "replace all occurrences (default false)",
+					"description": "replace all occurrences of old_text (default false)",
 				},
 			},
 			"required": []string{"path", "old_text", "new_text"},

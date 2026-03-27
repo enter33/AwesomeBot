@@ -39,13 +39,13 @@ func (t *WriteTool) ToolName() AgentTool {
 func (t *WriteTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        string(AgentToolWrite),
-		Description: openai.String("write content to a file, creating or overwriting the file"),
+		Description: openai.String("Write content to a file, creating new files or overwriting existing ones.\n\nBehavior:\n- Creates parent directories if they don't exist\n- Overwrites existing files completely (no merge)\n- For partial updates, use edit tool instead\n\nUse when: creating new files, replacing entire file content.\nAvoid: small changes to existing files (use edit instead)."),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "the file path to write to",
+					"description": "the file path to write to (creates parent dirs if needed)",
 				},
 				"content": map[string]any{
 					"type":        "string",

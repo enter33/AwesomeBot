@@ -65,13 +65,13 @@ func (t *BashTool) ToolName() AgentTool {
 func (t *BashTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        string(AgentToolBash),
-		Description: openai.String("execute bash command with safety guards (timeout, dangerous command filtering, path traversal protection, output truncation)"),
+		Description: openai.String("Execute bash commands with safety guards.\n\nFeatures:\n- Timeout protection (default 60s, max 600s)\n- Dangerous command filtering (rm -rf, del /f, fork bombs, disk operations, etc.)\n- Path traversal protection (prevents access outside workspace)\n- Output truncation at 10k chars\n\nUse when: need to run shell commands, git operations, compile code, run tests, etc.\nAvoid: file operations (use read/write/edit instead).\n\nDangerous commands blocked: rm -rf, del /f, fork bombs, disk operations (mkfs, dd, format), shutdown/reboot"),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"command": map[string]any{
 					"type":        "string",
-					"description": "the bash command to execute",
+					"description": "the bash command to execute (e.g., 'git status', 'go build ./...', 'npm test')",
 				},
 				"timeout": map[string]any{
 					"type":        "integer",

@@ -28,3 +28,21 @@ func CreateBashTool(workspaceDir string) Tool {
 	log.Printf("Docker available, using DockerBashTool with sandbox container '%s'", containerName)
 	return NewDockerBashTool(containerName, workspaceDir)
 }
+
+// CreateGrepTool 创建 grep 工具
+func CreateGrepTool(workspaceDir string) Tool {
+	if workspaceDir != "" {
+		resolver := NewPathResolver(workspaceDir, workspaceDir)
+		return NewGrepToolWithResolver(resolver)
+	}
+	return NewGrepTool()
+}
+
+// CreateGlobTool 创建 glob 工具
+func CreateGlobTool(workspaceDir string) Tool {
+	if workspaceDir != "" {
+		resolver := NewPathResolver(workspaceDir, workspaceDir)
+		return NewGlobToolWithResolver(resolver)
+	}
+	return NewGlobTool()
+}

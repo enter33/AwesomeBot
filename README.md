@@ -253,6 +253,9 @@ TUI 会实时显示以下类型的消息：
 | `write` | 写入文件内容 | 是 |
 | `edit` | 编辑文件（智能匹配/CRLF处理） | 是 |
 | `list` | 列出目录（递归/忽略噪音目录） | 否 |
+| `glob` | 模式匹配文件搜索 | 否 |
+| `grep` | 正则搜索文件内容 | 否 |
+| `todo` | 复杂多步骤任务 | 否 |
 | `bash` | 执行 bash 命令 | 是 |
 | `web_search` | 网络搜索 | 否 |
 | `web_fetch` | 抓取网页内容 | 否 |
@@ -567,6 +570,17 @@ awesomebot/
 - `@modelcontextprotocol/server-github` - GitHub API
 
 ## 更新日志
+
+### v1.2.1
+
+**提示词工程优化：**
+
+- 系统提示词重构：添加 Tool Selection Strategy、Output Guidelines，重构 Error Handling 和 Clarification
+- Error Handling 强化：强调"事前验证"规则，要求操作前先 list/glob 确认文件路径
+- Todo 工具描述优化：改为结构化格式（Use when / Avoid when）
+- Bash 工具描述：添加危险命令拦截列表
+- Read 工具：添加目录操作限制说明
+- 路径解析：Windows 中文路径兼容修复
 
 ### v1.2.0
 

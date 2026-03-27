@@ -18,6 +18,9 @@ const (
 	AgentToolLoadSkill AgentTool = "load_skill"
 	AgentToolWebSearch AgentTool = "web_search"
 	AgentToolWebFetch  AgentTool = "web_fetch"
+	AgentToolTodo      AgentTool = "todo"
+	AgentToolGrep      AgentTool = "grep"
+	AgentToolGlob      AgentTool = "glob"
 )
 
 // Tool 工具接口

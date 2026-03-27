@@ -48,13 +48,13 @@ func (t *ReadTool) ToolName() AgentTool {
 func (t *ReadTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        string(AgentToolRead),
-		Description: openai.String("read file content with optional line-based pagination. Returns numbered lines."),
+		Description: openai.String("Read file content with optional line-based pagination.\n\nReturns numbered lines (format: 'line_num| content') for easy reference.\nSupports: UTF-8 text files, images (PNG, JPEG, GIF, WebP, BMP).\n\nTips:\n- Use offset/limit for large files\n- offset is 1-indexed (default 1)\n- limit defaults to 2000 lines\n- Shows pagination hint when file continues\n\nAvoid:\n- Directories (use list or glob instead)"),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "the file path to read",
+					"description": "the file path to read (absolute or relative to workspace)",
 				},
 				"offset": map[string]any{
 					"type":        "integer",
@@ -63,7 +63,7 @@ func (t *ReadTool) Info() openai.ChatCompletionToolUnionParam {
 				},
 				"limit": map[string]any{
 					"type":        "integer",
-					"description": "maximum number of lines to read (default 2000)",
+					"description": "maximum number of lines to read (default 2000, max 128000 chars)",
 					"minimum":     1,
 				},
 			},

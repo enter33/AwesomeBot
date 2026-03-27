@@ -24,6 +24,7 @@ func NewPathResolver(workspaceDir, allowedDir string) *PathResolver {
 // - ~ 扩展为用户主目录
 // - 相对路径基于 workspaceDir 解析
 // - 安全检查不允许访问 allowedDir 之外的目录
+// - Windows 兼容：使用 os.ReadDir 验证文件存在性
 func (r *PathResolver) Resolve(path string) (string, error) {
 	// 处理 ~ 扩展
 	resolved := expandUser(path)
@@ -52,7 +53,42 @@ func (r *PathResolver) Resolve(path string) (string, error) {
 		}
 	}
 
+	// Windows 兼容：验证路径存在性
+	// os.Stat 在某些 Windows 配置下对包含中文路径的文件会失败
+	// 但 os.ReadDir 可以正常工作
+	if !pathExists(absPath) {
+		return "", &PathNotFoundError{Path: path}
+	}
+
 	return absPath, nil
+}
+
+// pathExists 检查路径是否存在（Windows 兼容）
+func pathExists(path string) bool {
+	// 首先尝试 os.Stat
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+
+	// Windows 兼容：如果 os.Stat 失败，尝试遍历父目录
+	// 获取父目录
+	dir := filepath.Dir(path)
+	name := filepath.Base(path)
+
+	// 检查父目录是否存在
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+
+	// 在父目录中查找文件名
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 // expandUser 处理 ~ 扩展为用户主目录
@@ -87,4 +123,13 @@ type PathOutsideAllowedError struct {
 
 func (e *PathOutsideAllowedError) Error() string {
 	return "path " + e.Path + " is outside allowed directory " + e.AllowedDir
+}
+
+// PathNotFoundError 路径不存在的错误
+type PathNotFoundError struct {
+	Path string
+}
+
+func (e *PathNotFoundError) Error() string {
+	return "path " + e.Path + " does not exist"
 }
