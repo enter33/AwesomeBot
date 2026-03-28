@@ -150,6 +150,36 @@ func Warn(format string, args ...interface{}) {
 	log("WARN", format, args...)
 }
 
+// SubagentInfo 输出带 subagent 标识的 Info 级别日志
+func SubagentInfo(subagentID, format string, args ...interface{}) {
+	subagentLog("INFO", subagentID, format, args...)
+}
+
+// SubagentError 输出带 subagent 标识的 Error 级别日志
+func SubagentError(subagentID, format string, args ...interface{}) {
+	subagentLog("ERROR", subagentID, format, args...)
+}
+
+// SubagentWarn 输出带 subagent 标识的 Warn 级别日志
+func SubagentWarn(subagentID, format string, args ...interface{}) {
+	subagentLog("WARN", subagentID, format, args...)
+}
+
+// SubagentDebug 输出带 subagent 标识的 Debug 级别日志
+func SubagentDebug(subagentID, format string, args ...interface{}) {
+	subagentLog("DEBUG", subagentID, format, args...)
+}
+
+func subagentLog(level, subagentID, format string, args ...interface{}) {
+	if logger == nil {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	line := fmt.Sprintf("[%s] [%s] [subagent:%s] %s\n", timestamp, level, subagentID, msg)
+	logger.file.WriteString(line)
+}
+
 func log(level, format string, args ...interface{}) {
 	if logger == nil {
 		return

@@ -1,5 +1,7 @@
 package agent
 
+import "github.com/enter33/AwesomeBot/internal/msgs"
+
 // 消息类型常量
 const (
 	MessageTypeReasoning   = "reasoning"
@@ -12,58 +14,29 @@ const (
 	MessageTypeTokenUsage  = "token_usage"
 )
 
-// ConfirmationAction 确认动作
-type ConfirmationAction int
+// ConfirmationAction 确认动作 (re-export from msgs for backward compatibility)
+type ConfirmationAction = msgs.ConfirmationAction
 
 const (
-	ConfirmAllow ConfirmationAction = iota
-	ConfirmReject
-	ConfirmAlwaysAllow
+	ConfirmAllow ConfirmationAction = msgs.ConfirmAllow
+	ConfirmReject ConfirmationAction = msgs.ConfirmReject
+	ConfirmAlwaysAllow ConfirmationAction = msgs.ConfirmAlwaysAllow
 )
 
 // MessageVO 用于流式展示当前模型流式输出或者状态
-type MessageVO struct {
-	Type string `json:"type"`
-
-	ReasoningContent        *string             `json:"reasoning_content,omitempty"`
-	Content                 *string             `json:"content,omitempty"`
-	ToolCall                *ToolCallVO         `json:"tool,omitempty"`
-	Policy                  *PolicyVO           `json:"policy,omitempty"`
-	Memory                  *MemoryVO           `json:"memory,omitempty"`
-	ToolConfirmationRequest *ToolConfirmationVO `json:"tool_confirmation_request,omitempty"`
-	TokenUsage              *TokenUsageVO       `json:"token_usage,omitempty"`
-}
+type MessageVO = msgs.MessageVO
 
 // PolicyVO 策略执行状态
-type PolicyVO struct {
-	Name    string `json:"name"`
-	Running bool   `json:"running"`
-	Error   error  `json:"error"`
-}
+type PolicyVO = msgs.PolicyVO
 
 // MemoryVO 记忆更新状态
-type MemoryVO struct {
-	Running bool  `json:"running"`
-	Error   error `json:"error"`
-}
+type MemoryVO = msgs.MemoryVO
 
 // ToolCallVO 工具调用信息
-type ToolCallVO struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
+type ToolCallVO = msgs.ToolCallVO
 
 // ToolConfirmationVO 工具确认请求
-type ToolConfirmationVO struct {
-	ToolName  string `json:"tool_name"`
-	Arguments string `json:"arguments"`
-}
+type ToolConfirmationVO = msgs.ToolConfirmationVO
 
 // TokenUsageVO Token 用量信息
-type TokenUsageVO struct {
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	TotalTokens      int     `json:"total_tokens"`
-	Speed            float64 `json:"speed"` // tokens/秒
-	Duration         float64 `json:"duration"` // 总耗时（秒）
-}
+type TokenUsageVO = msgs.TokenUsageVO

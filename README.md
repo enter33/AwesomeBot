@@ -463,6 +463,36 @@ description: 执行代码审查，检查潜在问题和改进建议
 | `failed` | 执行失败 |
 | `stopped` | 已停止 |
 
+### 子代理错误处理与状态通知
+
+子代理系统内置完整的错误处理和状态通知机制：
+
+**状态回调机制：**
+- Instance 完成后自动触发回调，通知状态变化
+- Manager 负责转发回调给所有注册的处理者
+- TUI 通过监听 completionCh 获取完成通知
+
+**错误传播：**
+- subagent 执行失败时，错误信息会通过回调机制传播
+- `get_subagent_result` 工具返回详细错误信息：`{"status": "failed", "error": "子代理执行失败"}`
+- 创建失败时，spawn 工具会返回具体错误原因
+
+**viewCh 阻塞保护：**
+- viewCh 发送采用 non-blocking 模式（buffer=10）
+- 当 viewCh 满时，消息会被丢弃并记录警告日志
+- 防止 subagent 因 TUI 处理不及时而阻塞
+
+**回调链路：**
+```
+Instance.Run() 完成
+    └─> Instance.notifyCompletion()
+            ├─> 发送 completionCh (non-blocking)
+            └─> 触发 statusCallbacks
+                    └─> Manager 转发
+                            ├─> 发送 Manager.completionCh
+                            └─> 触发 Manager.statusCallbacks
+```
+
 ### TUI 子代理面板
 
 按 `Ctrl+S` 可显示/隐藏子代理面板，实时查看所有子代理的状态：
@@ -634,6 +664,7 @@ awesomebot/
   - 新增工具：`spawn`（创建子代理）、`get_subagent_result`（获取结果）、`send_message`（发送消息）
   - TUI 子代理面板：按 `Ctrl+S` 显示/隐藏，实时查看子代理状态
   - 子代理生命周期管理：创建、运行、完成、失败、停止
+  - **错误处理与状态通知**：状态回调机制、错误传播、viewCh 阻塞保护
 
 **代码重构：**
 

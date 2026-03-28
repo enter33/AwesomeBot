@@ -19,6 +19,7 @@ import (
 	"github.com/enter33/AwesomeBot/internal/mcp"
 	"github.com/enter33/AwesomeBot/internal/memory"
 	"github.com/enter33/AwesomeBot/internal/storage"
+	"github.com/enter33/AwesomeBot/internal/subagent"
 	"github.com/enter33/AwesomeBot/internal/tool"
 	"github.com/enter33/AwesomeBot/internal/tui"
 	"github.com/enter33/AwesomeBot/pkg/config"
@@ -140,6 +141,7 @@ func main() {
 		tool.NewListDirToolWithResolver(pathResolver),
 		tool.CreateBashTool(workspaceDir),
 		tool.NewLoadSkillTool(),
+		tool.NewTodoTool(),
 	}
 
 	// 添加 Web 工具（如果配置存在）
@@ -161,6 +163,54 @@ func main() {
 
 	// 创建 LLM 客户端
 	llmClient := llm.NewOpenAIClient(llmConfig)
+
+	// 创建 Subagent Manager
+	subagentManager := subagent.NewManager(
+		llmConfig,
+		confirmConfig,
+		tools,
+		mcpClients,
+		contextWindow,
+	)
+
+	// 添加 spawn 和 send_message 工具
+	tools = append(tools,
+		tool.NewSpawnTool(func(name, subagentType, systemPrompt, task string) (string, error) {
+			return subagentManager.CreateSubagent(name, subagent.SubagentType(subagentType), systemPrompt, task)
+		}),
+		tool.NewSendMessageTool(func(subagentID, message string) (tool.SendMessageResult, error) {
+			sub, ok := subagentManager.GetSubagent(subagentID)
+			if !ok {
+				return tool.SendMessageResult{Error: "子代理不存在"}, nil
+			}
+			err := sub.SendMessage(context.Background(), message)
+			if err != nil {
+				return tool.SendMessageResult{Error: err.Error()}, nil
+			}
+			return tool.SendMessageResult{Status: string(sub.Status())}, nil
+		}),
+		tool.NewGetResultTool(func(subagentID string) string {
+			sub, ok := subagentManager.GetSubagent(subagentID)
+			if !ok {
+				return "[NOT_FOUND] 子代理不存在"
+			}
+			status := sub.Status()
+			if status == subagent.StatusRunning {
+				return "[WAITING] 子代理正在运行中，请等待完成后再调用此工具获取结果。不要生成其他输出。"
+			}
+			if status == subagent.StatusFailed {
+				return "[FAILED] 子代理执行失败。"
+			}
+			if status == subagent.StatusStopped {
+				return "[STOPPED] 子代理已被终止。"
+			}
+			result := sub.Result()
+			if result == "" {
+				return "子代理已完成，但未返回结果。"
+			}
+			return result
+		}),
+	)
 
 	// 创建 Agent
 	codingAgent := agent.NewAgent(
@@ -184,7 +234,7 @@ func main() {
 	}()
 
 	// 创建 TUI
-	tuiModel := tui.NewModel(codingAgent, llmConfig.Model, version)
+	tuiModel := tui.NewModelWithSubagentManager(codingAgent, subagentManager, llmConfig.Model, version)
 
 	// 运行 TUI
 	p := tea.NewProgram(tuiModel)

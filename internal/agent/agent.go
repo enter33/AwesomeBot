@@ -110,7 +110,8 @@ func (a *Agent) ResetSession() {
 }
 
 // RunStreaming 流式运行
-func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan MessageVO, confirmCh chan ConfirmationAction) error {
+// onActivity 是可选的活动回调，在 agent 产生输出时调用，用于更新看门狗的 lastActivityTime
+func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan MessageVO, confirmCh chan ConfirmationAction, onActivity func()) error {
 	startTime := time.Now()
 
 	// 记录用户输入
@@ -221,6 +222,9 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 						Type:    MessageTypeContent,
 						Content: &delta.Content,
 					}
+					if onActivity != nil {
+						onActivity()
+					}
 				}
 			}
 		}
@@ -261,6 +265,10 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			logging.Info("========== 工具调用 ==========")
 			logging.Info("Tool: %s", toolCall.Function.Name)
 			logging.Info("Arguments: %s", toolCall.Function.Arguments)
+
+			if onActivity != nil {
+				onActivity()
+			}
 
 			t, ok := a.findTool(toolCall.Function.Name)
 			if !ok {
@@ -332,6 +340,10 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 					Name:      toolCall.Function.Name,
 					Arguments: toolCall.Function.Arguments,
 				},
+			}
+
+			if onActivity != nil {
+				onActivity()
 			}
 
 			toolMsg := openai.ToolMessage(toolResult, toolCall.ID)

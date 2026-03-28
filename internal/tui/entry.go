@@ -17,13 +17,16 @@ var (
 	confirmSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
 	confirmOptionStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	tokenStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
+	subagentDoneStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
 // LogEntry 日志条目结构体
 type LogEntry struct {
-	Title   string         // 标题（如 "你:", "推理:" 等）
-	Content string         // 正文内容
-	Style   lipgloss.Style // 渲染样式
+	Title         string         // 标题（如 "你:", "推理:" 等）
+	Content       string         // 正文内容
+	Style         lipgloss.Style // 渲染样式
+	SubagentID    string         // 子代理 ID
+	SubagentName  string         // 子代理名称
 }
 
 // NewLabel 创建轮次标签
@@ -128,8 +131,14 @@ func (e *LogEntry) AppendContent(chunk string) {
 }
 
 func (e *LogEntry) Render() string {
+	// 如果有子代理名称，添加前缀
+	var prefix string
+	if e.SubagentName != "" {
+		prefix = "[" + e.SubagentName + "] "
+	}
+
 	if e.Title == "" {
-		return e.Style.Render(e.Content)
+		return e.Style.Render(prefix + e.Content)
 	}
 	// 如果内容为空，只返回标题，避免显示 "回答: " 这样的空块
 	if e.Content == "" {
@@ -139,5 +148,5 @@ func (e *LogEntry) Render() string {
 	if strings.TrimSpace(e.Content) == "" {
 		return ""
 	}
-	return e.Style.Render(e.Title + ": " + e.Content)
+	return e.Style.Render(prefix + e.Title + ": " + e.Content)
 }

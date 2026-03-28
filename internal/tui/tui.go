@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/enter33/AwesomeBot/internal/agent"
+	"github.com/enter33/AwesomeBot/internal/logging"
+	"github.com/enter33/AwesomeBot/internal/subagent"
 )
 
 type streamMsg struct {
@@ -22,6 +25,22 @@ type streamDoneMsg struct {
 	err error
 }
 
+// subagentCompletionMsg 子代理完成消息
+type subagentCompletionMsg struct {
+	subagentID   string
+	subagentName string
+	status       subagent.SubagentStatus
+	result       string
+	err          error
+}
+
+// subagentStreamMsg 子代理流消息
+type subagentStreamMsg struct {
+	subagentID   string
+	subagentName string
+	event        agent.MessageVO
+}
+
 type runState int
 
 const (
@@ -29,6 +48,7 @@ const (
 	stateRunning
 	stateAborting
 	stateAwaitingConfirmation
+	stateSubagentRunning
 )
 
 type activeStream struct {
@@ -41,6 +61,32 @@ type activeStream struct {
 	contentBody int
 	policyBody  int // 当前策略 log entry 的索引
 	memoryBody  int // 当前记忆更新 log entry 的索引
+}
+
+// subagentOutput 子代理输出缓冲区
+type subagentOutput struct {
+	lines      []string
+	maxLines   int
+	lastLogIdx int // 在 m.logs 中的索引，-1 表示未添加
+}
+
+func newSubagentOutput(maxLines int) *subagentOutput {
+	return &subagentOutput{
+		lines:      make([]string, 0, maxLines),
+		maxLines:   maxLines,
+		lastLogIdx: -1,
+	}
+}
+
+func (so *subagentOutput) add(line string) {
+	so.lines = append(so.lines, line)
+	if len(so.lines) > so.maxLines {
+		so.lines = so.lines[len(so.lines)-so.maxLines:]
+	}
+}
+
+func (so *subagentOutput) getContent() string {
+	return strings.Join(so.lines, "\n")
 }
 
 type TuiViewModel struct {
@@ -64,6 +110,10 @@ type TuiViewModel struct {
 	height int
 
 	logsViewport viewport.Model
+
+	// Subagent 相关
+	subagentManager *subagent.Manager
+	subagentOutputs map[string]*subagentOutput // 子代理输出缓冲区
 }
 
 var (
@@ -76,6 +126,10 @@ var (
 )
 
 func NewModel(agent *agent.Agent, modelName, version string) *TuiViewModel {
+	return NewModelWithSubagentManager(agent, nil, modelName, version)
+}
+
+func NewModelWithSubagentManager(agent *agent.Agent, subagentMgr *subagent.Manager, modelName, version string) *TuiViewModel {
 	vp := viewport.New()
 	vp.SoftWrap = true
 	vp.MouseWheelEnabled = false
@@ -88,11 +142,14 @@ func NewModel(agent *agent.Agent, modelName, version string) *TuiViewModel {
 		logsViewport:       vp,
 		confirmOptions:     []string{"允许", "拒绝", "始终允许"},
 		selectedConfirmIdx: 0,
+		subagentManager:    subagentMgr,
+		subagentOutputs:    make(map[string]*subagentOutput),
 	}
 }
 
 func (m *TuiViewModel) Init() tea.Cmd {
-	return nil
+	// 启动子代理消息监听
+	return m.startSubagentListener()
 }
 
 func waitStreamEvent(ch <-chan agent.MessageVO) tea.Cmd {
@@ -146,11 +203,25 @@ func (m *TuiViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case streamDoneMsg:
 		return m.handleStreamDone(msg)
+	case subagentStreamMsg:
+		return m.handleSubagentStreamMsg(msg)
+	case subagentCompletionMsg:
+		return m.handleSubagentCompletion(msg)
 	}
 	return m, nil
 }
 
 func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// subagent 运行时不允许输入，只允许 ctrl+c 终止 subagent
+	if m.state == stateSubagentRunning {
+		if msg.String() == "ctrl+c" {
+			m.stopAllSubagents()
+			m.state = stateIdle
+			m.refreshLogsViewportContent()
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		m.stopActiveStream()
@@ -219,6 +290,23 @@ func (m *TuiViewModel) handleSubmit() (tea.Model, tea.Cmd) {
 	query := strings.TrimSpace(m.input)
 	if query == "" {
 		return m, nil
+	}
+
+	// 检查是否有 subagent 正在运行
+	if m.subagentManager != nil {
+		streams := m.subagentManager.ListStreams()
+		hasRunning := false
+		for _, s := range streams {
+			if s.Status == subagent.StatusRunning {
+				hasRunning = true
+				break
+			}
+		}
+		if hasRunning {
+			m.notice = "有子代理正在运行，请等待完成后再输入。"
+			m.refreshLogsViewportContent()
+			return m, nil
+		}
 	}
 
 	if m.state != stateIdle {
@@ -395,6 +483,239 @@ func (m *TuiViewModel) handleStreamDone(msg streamDoneMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// startSubagentListener 启动子代理消息监听协程
+func (m *TuiViewModel) startSubagentListener() tea.Cmd {
+	return func() tea.Msg {
+		for {
+			if m.subagentManager == nil {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
+			// 先检查 completionCh
+			completionCh := m.subagentManager.CompletionChan()
+			select {
+			case notification, ok := <-completionCh:
+				if ok {
+					// 获取 subagent name
+					sub, found := m.subagentManager.GetSubagent(notification.SubagentID)
+					name := notification.SubagentID
+					if found {
+						name = sub.Name()
+					}
+					return subagentCompletionMsg{
+						subagentID:   notification.SubagentID,
+						subagentName: name,
+						status:       notification.Status,
+						result:       notification.Result,
+						err:          notification.Err,
+					}
+				}
+			default:
+			}
+
+			streams := m.subagentManager.ListStreams()
+			hasRunning := false
+			for _, stream := range streams {
+				// 检测子代理状态变化（从运行变为完成/失败）
+				if stream.Status != subagent.StatusRunning {
+					m.cleanupSubagentOutput(stream.ID, stream.Name, stream.Status)
+					continue
+				}
+				hasRunning = true
+				select {
+				case msg, ok := <-stream.ViewCh:
+					if !ok {
+						continue
+					}
+					return subagentStreamMsg{
+						subagentID:   stream.ID,
+						subagentName: stream.Name,
+						event:        msg,
+					}
+				default:
+				}
+			}
+
+			// 更新子代理运行状态
+			if hasRunning && m.state != stateSubagentRunning {
+				m.state = stateSubagentRunning
+			} else if !hasRunning && m.state == stateSubagentRunning {
+				m.state = stateIdle
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// cleanupSubagentOutput 清理子代理输出并显示完成状态
+func (m *TuiViewModel) cleanupSubagentOutput(subagentID, subagentName string, status subagent.SubagentStatus) {
+	output, exists := m.subagentOutputs[subagentID]
+	if !exists {
+		return
+	}
+
+	// 更新最后一条日志为完成状态
+	if output.lastLogIdx >= 0 && output.lastLogIdx < len(m.logs) {
+		var statusText string
+		switch status {
+		case subagent.StatusCompleted:
+			statusText = "✓ 已完成"
+		case subagent.StatusFailed:
+			statusText = "✗ 失败"
+		case subagent.StatusStopped:
+			statusText = "■ 已停止"
+		default:
+			statusText = "○ 结束"
+		}
+		// 在内容末尾添加状态
+		m.logs[output.lastLogIdx].Content = output.getContent() + "\n" + subagentDoneStyle.Render(statusText)
+	}
+
+	// 清理缓冲区
+	delete(m.subagentOutputs, subagentID)
+
+	// 刷新视图
+	m.refreshLogsViewportContent()
+}
+
+// handleSubagentCompletion 处理子代理完成通知
+func (m *TuiViewModel) handleSubagentCompletion(msg subagentCompletionMsg) (tea.Model, tea.Cmd) {
+	// 如果有结果，记录日志
+	if msg.result != "" {
+		logging.Info("Subagent %s completed with result: %s", msg.subagentName, truncateString(msg.result, 100))
+	}
+
+	// 如果有错误，记录错误
+	if msg.err != nil {
+		logging.Error("Subagent %s failed: %v", msg.subagentName, msg.err)
+	}
+
+	// 更新运行状态
+	streams := m.subagentManager.ListStreams()
+	hasRunning := false
+	for _, stream := range streams {
+		if stream.Status == subagent.StatusRunning {
+			hasRunning = true
+			break
+		}
+	}
+	if !hasRunning && m.state == stateSubagentRunning {
+		m.state = stateIdle
+	}
+
+	return m, m.startSubagentListener()
+}
+
+// handleSubagentStreamMsg 处理子代理流消息
+func (m *TuiViewModel) handleSubagentStreamMsg(msg subagentStreamMsg) (tea.Model, tea.Cmd) {
+	switch msg.event.Type {
+	case agent.MessageTypeReasoning:
+		// 子代理推理内容不显示在终端
+		return m, m.startSubagentListener()
+	case agent.MessageTypeContent:
+		// 子代理回答内容不显示在终端
+		return m, m.startSubagentListener()
+	case agent.MessageTypeToolCall:
+		if msg.event.ToolCall == nil {
+			return m, m.startSubagentListener()
+		}
+		toolInfo := fmt.Sprintf("%s(%s)", msg.event.ToolCall.Name, msg.event.ToolCall.Arguments)
+		m.appendSubagentOutput(msg.subagentID, msg.subagentName, "tool", toolInfo)
+	case agent.MessageTypeError:
+		if msg.event.Content == nil {
+			return m, m.startSubagentListener()
+		}
+		m.appendSubagentOutput(msg.subagentID, msg.subagentName, "error", *msg.event.Content)
+	case agent.MessageTypeTokenUsage:
+		// Token 用量不显示在滚动区域，子代理完成后统一显示
+		return m, m.startSubagentListener()
+	case agent.MessageTypeToolConfirm:
+		// 子代理的确认请求自动批准
+		if msg.event.ToolConfirmationRequest != nil {
+			m.autoConfirmSubagent(msg.subagentID)
+		}
+		return m, m.startSubagentListener()
+	case agent.MessageTypePolicy, agent.MessageTypeMemory:
+		// 这些类型不在子代理中显示
+		return m, m.startSubagentListener()
+	}
+
+	m.refreshLogsViewportContent()
+	return m, m.startSubagentListener()
+}
+
+// autoConfirmSubagent 自动批准子代理的确认请求
+func (m *TuiViewModel) autoConfirmSubagent(subagentID string) {
+	if m.subagentManager == nil {
+		return
+	}
+	streams := m.subagentManager.ListStreams()
+	for _, stream := range streams {
+		if stream.ID == subagentID && stream.Status == subagent.StatusRunning {
+			select {
+			case stream.ConfirmCh <- agent.ConfirmAllow:
+			default:
+			}
+			break
+		}
+	}
+}
+
+// appendSubagentOutput 追加子代理输出（限制3-5行滚动）
+func (m *TuiViewModel) appendSubagentOutput(subagentID, subagentName, msgType, content string) {
+	// 获取或创建子代理输出缓冲区
+	output, exists := m.subagentOutputs[subagentID]
+	if !exists {
+		output = newSubagentOutput(5) // 最多保留5行
+		m.subagentOutputs[subagentID] = output
+	}
+
+	// 格式化输出行
+	var line string
+	switch msgType {
+	case "reasoning":
+		line = reasonStyle.Render("[思考] " + truncateString(content, 100))
+	case "content":
+		line = contentStyle.Render("[回答] " + truncateString(content, 100))
+	case "tool":
+		line = toolStyle.Render("[工具] " + content)
+	case "error":
+		line = errorStyle.Render("[错误] " + content)
+	default:
+		line = contentStyle.Render(content)
+	}
+
+	output.add(line)
+
+	// 更新或创建日志条目
+	fullContent := output.getContent()
+	if output.lastLogIdx >= 0 && output.lastLogIdx < len(m.logs) {
+		// 更新现有条目
+		m.logs[output.lastLogIdx].Content = fullContent
+	} else {
+		// 创建新条目
+		entry := LogEntry{
+			Title:        subagentName,
+			Content:      fullContent,
+			Style:        contentStyle,
+			SubagentID:   subagentID,
+			SubagentName: subagentName,
+		}
+		m.logs = append(m.logs, entry)
+		output.lastLogIdx = len(m.logs) - 1
+	}
+}
+
+// truncateString 截断字符串
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 func (m *TuiViewModel) startNewTurn(query string) (tea.Model, tea.Cmd) {
 	m.notice = ""
 	turnStart := len(m.logs)
@@ -418,7 +739,7 @@ func (m *TuiViewModel) startNewTurn(query string) (tea.Model, tea.Cmd) {
 	m.refreshLogsViewportContent()
 
 	go func() {
-		err := m.agent.RunStreaming(ctx, query, streamC, confirmCh)
+		err := m.agent.RunStreaming(ctx, query, streamC, confirmCh, nil)
 		close(streamC)
 		close(confirmCh)
 		doneC <- err
@@ -463,6 +784,20 @@ func (m *TuiViewModel) stopActiveStream() {
 		m.active.cancel()
 	}
 	m.active = nil
+}
+
+// stopAllSubagents 停止所有运行中的 subagent
+func (m *TuiViewModel) stopAllSubagents() {
+	if m.subagentManager == nil {
+		return
+	}
+	subagents := m.subagentManager.ListSubagents()
+	for _, sub := range subagents {
+		if sub.Status() == subagent.StatusRunning {
+			_ = sub.Stop()
+		}
+	}
+	m.notice = "已终止所有子代理。"
 }
 
 func (m *TuiViewModel) scrollUp(n int) {
@@ -561,6 +896,22 @@ func (m *TuiViewModel) View() tea.View {
 	b.WriteString(labelStyle.Render("版本: "))
 	b.WriteString(contentStyle.Render(m.version))
 	b.WriteString("\n")
+
+	// 显示 subagent 状态（只显示运行中的）
+	if m.subagentManager != nil {
+		subagents := m.subagentManager.ListSubagents()
+		runningSubagents := make([]subagent.Subagent, 0)
+		for _, s := range subagents {
+			if s.Status() == subagent.StatusRunning {
+				runningSubagents = append(runningSubagents, s)
+			}
+		}
+		if len(runningSubagents) > 0 {
+			b.WriteString(RenderSubagentList(runningSubagents))
+			b.WriteString("\n")
+		}
+	}
+
 	b.WriteString(m.logsViewport.View())
 
 	// 如果在确认状态，渲染确认框
@@ -570,14 +921,17 @@ func (m *TuiViewModel) View() tea.View {
 	}
 
 	b.WriteString("\n")
-	if m.state != stateIdle && m.state != stateAwaitingConfirmation {
+	if m.state == stateSubagentRunning {
+		b.WriteString(footerStyle.Render("子代理运行中，Ctrl+C 终止，输入暂不可用。"))
+		b.WriteString("\n")
+	} else if m.state != stateIdle && m.state != stateAwaitingConfirmation {
 		b.WriteString(footerStyle.Render("模型响应中，输入暂不可用。"))
 		b.WriteString("\n")
 	}
 	if m.state == stateAwaitingConfirmation {
 		b.WriteString(footerStyle.Render("↑↓ 选择  Enter 确认  Esc 拒绝"))
 		b.WriteString("\n")
-	} else {
+	} else if m.state != stateSubagentRunning {
 		b.WriteString(contentStyle.Render(">>> " + m.input))
 		b.WriteString("\n")
 	}
