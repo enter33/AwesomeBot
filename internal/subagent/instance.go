@@ -214,7 +214,9 @@ func (s *Instance) Run(ctx context.Context, query string, viewCh chan agent.Mess
 		close(internalViewCh)
 
 		s.mu.Lock()
-		if err != nil {
+		if s.status == StatusStopped {
+			// 已被 Stop() 设置为 Stopped，不覆盖，不发送失败日志
+		} else if err != nil {
 			s.status = StatusFailed
 			logging.SubagentError(s.id, "failed: %v", err)
 		} else {
@@ -294,11 +296,13 @@ func (s *Instance) Stop() error {
 	defer s.mu.Unlock()
 
 	if s.status == StatusRunning {
+		// 先设置状态，确保其他协程能立即看到最新状态
+		s.status = StatusStopped
+		logging.SubagentInfo(s.id, "stopped")
+		// 再取消 context，让 Run() goroutine 能检测到并退出
 		if s.cancelTimeout != nil {
 			s.cancelTimeout()
 		}
-		s.status = StatusStopped
-		logging.SubagentInfo(s.id, "stopped")
 	}
 	return nil
 }

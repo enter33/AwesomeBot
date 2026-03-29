@@ -73,6 +73,15 @@ func (t *GetResultTool) Execute(ctx context.Context, argumentsInJSON string) (st
 
 			select {
 			case <-ctx.Done():
+				// Context 取消时，立即重新检查状态
+				// Stop() 已先设置 status = StatusStopped，所以 getter 会返回最新状态
+				result = t.getter(args.SubagentID)
+				if strings.Contains(result, "[STOPPED]") {
+					return fmt.Sprintf(`{"result": "", "status": "stopped", "error": "子代理已被终止"}`), nil
+				}
+				if strings.Contains(result, "[FAILED]") {
+					return fmt.Sprintf(`{"result": "", "status": "failed", "error": "子代理执行失败"}`), nil
+				}
 				return result, nil
 			case <-time.After(2 * time.Second):
 				continue
