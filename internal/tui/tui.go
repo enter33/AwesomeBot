@@ -541,7 +541,12 @@ func (m *TuiViewModel) startSubagentListener() tea.Cmd {
 			if hasRunning && m.state != stateSubagentRunning {
 				m.state = stateSubagentRunning
 			} else if !hasRunning && m.state == stateSubagentRunning {
-				m.state = stateIdle
+				// 只有当主Agent loop也结束时（m.active == nil），才切换到 stateIdle
+				// 如果主Agent loop还在运行（m.active != nil），说明正在处理get_subagent_result等工具调用，
+				// 此时不应该解锁用户输入，要等主Agent loop真正结束
+				if m.active == nil {
+					m.state = stateIdle
+				}
 			}
 
 			time.Sleep(10 * time.Millisecond)
@@ -601,8 +606,18 @@ func (m *TuiViewModel) handleSubagentCompletion(msg subagentCompletionMsg) (tea.
 			break
 		}
 	}
-	if !hasRunning && m.state == stateSubagentRunning {
-		m.state = stateIdle
+
+	// 如果没有subagent在运行，清理状态
+	if !hasRunning {
+		if m.active != nil {
+			if m.active.cancel != nil {
+				m.active.cancel()
+			}
+			m.active = nil
+		}
+		if m.state != stateIdle {
+			m.state = stateIdle
+		}
 	}
 
 	return m, m.startSubagentListener()
@@ -796,6 +811,13 @@ func (m *TuiViewModel) stopAllSubagents() {
 		if sub.Status() == subagent.StatusRunning {
 			_ = sub.Stop()
 		}
+	}
+	// 清理 active stream（如果存在）
+	if m.active != nil {
+		if m.active.cancel != nil {
+			m.active.cancel()
+		}
+		m.active = nil
 	}
 	m.notice = "已终止所有子代理。"
 }
