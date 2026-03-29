@@ -124,7 +124,7 @@ func main() {
 	// 配置需要确认的工具
 	confirmConfig := agent.ToolConfirmConfig{
 		RequireConfirmTools: map[tool.AgentTool]bool{
-			tool.AgentToolBash: true,
+			tool.AgentToolBash:  true,
 			tool.AgentToolWrite: true,
 		},
 	}
@@ -189,26 +189,21 @@ func main() {
 			}
 			return tool.SendMessageResult{Status: string(sub.Status())}, nil
 		}),
-		tool.NewGetResultTool(func(subagentID string) string {
-			sub, ok := subagentManager.GetSubagent(subagentID)
-			if !ok {
-				return "[NOT_FOUND] 子代理不存在"
+		tool.NewGetResultTool(func(subagentID string) (<-chan tool.ResultNotification, error) {
+			ch, err := subagentManager.GetResultChannel(subagentID)
+			if err != nil {
+				return nil, err
 			}
-			status := sub.Status()
-			if status == subagent.StatusRunning {
-				return "[WAITING] 子代理正在运行中，请等待完成后再调用此工具获取结果。不要生成其他输出。"
-			}
-			if status == subagent.StatusFailed {
-				return "[FAILED] 子代理执行失败。"
-			}
-			if status == subagent.StatusStopped {
-				return "[STOPPED] 子代理已被终止。"
-			}
-			result := sub.Result()
-			if result == "" {
-				return "子代理已完成，但未返回结果。"
-			}
-			return result
+			resultCh := make(chan tool.ResultNotification, 1)
+			go func() {
+				notification := <-ch
+				resultCh <- tool.ResultNotification{
+					Status: string(notification.Status),
+					Result: notification.Result,
+					Err:    notification.Err,
+				}
+			}()
+			return resultCh, nil
 		}),
 	)
 
@@ -285,4 +280,3 @@ func runInitWizard() config.Config {
 	fmt.Printf("配置已保存到: %s\n", configPath)
 	return cfg
 }
-

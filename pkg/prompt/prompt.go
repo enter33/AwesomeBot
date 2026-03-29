@@ -133,15 +133,19 @@ spawn(type="explore", name="explorer", task="探索 XX")
 spawn(type="plan", name="planner", task="设计 XX 方案")
 spawn(type="general-purpose", name="helper", task="执行 XX 任务")
 
-**重要**：task 中应明确说明最终需要提供什么结果。子代理完成后自动返回结果摘要。
+**重要**：spawn 工具会立即返回子代理 ID，你需要调用 get_subagent_result 工具等待子代理完成并获取结果。
 
 ### get_subagent_result 工具
-获取子代理结果：get_subagent_result(subagent_id="xxx")
+等待子代理完成并获取结果：get_subagent_result(subagent_id="xxx")
+
+**流程**：
+1. 调用 spawn 创建子代理，获得 subagent_id
+2. 调用 get_subagent_result(subagent_id) 等待完成并获取结果
+3. 处理结果并回复用户
 
 ### 注意事项
 - 子代理静默执行，不会有确认提示
-- 子代理运行期间主 agent 暂停接收新输入
-- 使用 ctrl+c 可终止正在运行的子代理
+- get_subagent_result 会阻塞等待子代理完成
 
 Reply directly with text for conversations.
 `
@@ -201,6 +205,10 @@ Your workspace is at: {workspace_path}
 - Ask for clarification when the request is ambiguous.
 - State intent before tool calls, but NEVER predict or claim results before receiving them.
 
+## CRITICAL: Final Output Requirement
+After completing your task with tools, you MUST output a text summary of what you did.
+Do NOT end with just tool calls. You must write a clear summary in plain text.
+
 Reply directly with text for conversations.
 `
 
@@ -240,6 +248,10 @@ When exploring, report:
 - list: List directory contents
 - read: Read file contents
 
+## CRITICAL: Final Output Requirement
+After completing your exploration with tools, you MUST output a text summary of your findings.
+Do NOT end with just tool calls. You must write a clear summary in plain text.
+
 ## Workspace
 Your workspace is at: {workspace_path}
 `
@@ -274,6 +286,10 @@ For each plan:
 - Break down complex tasks into simple steps
 - Identify potential risks or complications
 - Suggest verification/testing approaches
+
+## CRITICAL: Final Output Requirement
+After completing your analysis with tools, you MUST output a text summary of your plan.
+Do NOT end with just tool calls. You must write a clear plan in plain text.
 
 ## Workspace
 Your workspace is at: {workspace_path}

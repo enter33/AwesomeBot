@@ -597,29 +597,6 @@ func (m *TuiViewModel) handleSubagentCompletion(msg subagentCompletionMsg) (tea.
 		logging.Error("Subagent %s failed: %v", msg.subagentName, msg.err)
 	}
 
-	// 更新运行状态
-	streams := m.subagentManager.ListStreams()
-	hasRunning := false
-	for _, stream := range streams {
-		if stream.Status == subagent.StatusRunning {
-			hasRunning = true
-			break
-		}
-	}
-
-	// 如果没有subagent在运行，清理状态
-	if !hasRunning {
-		if m.active != nil {
-			if m.active.cancel != nil {
-				m.active.cancel()
-			}
-			m.active = nil
-		}
-		if m.state != stateIdle {
-			m.state = stateIdle
-		}
-	}
-
 	return m, m.startSubagentListener()
 }
 

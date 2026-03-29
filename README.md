@@ -655,6 +655,20 @@ awesomebot/
 
 ## 更新日志
 
+### v1.3.1
+
+**Bug 修复：**
+
+- **修复 subagent 完成后主 agent context 被错误取消的问题**：删除了 TUI 中错误的 context 取消逻辑，确保主 agent 在处理 `get_subagent_result` 结果时不会被中断
+
+**改进：**
+
+- **优化 spawn/get_subagent_result 两步式调用设计**：
+  - `spawn` 工具异步创建 subagent，立即返回 ID
+  - `get_subagent_result` 工具使用 channel 阻塞等待结果
+  - 添加 `resultCh` channel 通信机制，确保结果正确传递
+- **精简调试日志**：删除了不必要的调试日志，保持代码简洁
+
 ### v1.3.0
 
 **新功能：**

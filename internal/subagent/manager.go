@@ -66,7 +66,7 @@ func filterOutTool(tools []tool.Tool, name tool.AgentTool) []tool.Tool {
 	return filtered
 }
 
-// CreateSubagent 创建新的子代理 (实现 SubagentManager 接口)
+// CreateSubagent 创建新的子代理，返回 ID
 func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemPrompt string, task string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -76,11 +76,9 @@ func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemP
 		name = fmt.Sprintf("%s-%s", subagentType, id[:8])
 	}
 
-	// 1. 创建独立的 offload storage
 	offloadStorage := storage.NewFileSystemStorage(
 		filepath.Join(config.GetAwesomeDir(), "offload", "subagent", id))
 
-	// 2. 创建上下文引擎
 	policies := []ctxengine.Policy{
 		ctxengine.NewOffloadPolicy(offloadStorage, 0.4, 0, 100, id),
 		ctxengine.NewSummaryPolicy(nil, 10, 20, 0.6),
@@ -88,13 +86,10 @@ func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemP
 	}
 	contextEngine := ctxengine.NewContextEngine(nil, policies, m.contextWindow, offloadStorage)
 
-	// 3. 创建 LLM 客户端
 	llmClient := llm.NewOpenAIClient(m.llmConfig)
 
-	// 4. 过滤掉 spawn tool，防止 subagent 创建嵌套 subagent
 	filteredTools := filterOutTool(m.tools, "spawn")
 
-	// 5. 创建 Agent
 	agentInstance := agent.NewAgent(
 		m.llmConfig,
 		systemPrompt,
@@ -106,7 +101,6 @@ func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemP
 		m.contextWindow,
 	)
 
-	// 5. 创建 Instance
 	instance := &Instance{
 		id:             id,
 		name:           name,
@@ -119,12 +113,13 @@ func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemP
 		idleTimeout:    defaultIdleTimeout,
 	}
 
+	resultCh := make(chan CompletionNotification, 1)
+	instance.SetResultCh(resultCh)
+
 	m.subagents[id] = instance
 
-	// 设置完成通知 channel
 	instance.SetCompletionCh(m.completionCh)
 
-	// 注册 Manager 的回调到 Instance
 	instance.RegisterStatusCallback(func(subagentID string, status SubagentStatus, result string, err error) {
 		m.mu.RLock()
 		callbacks := make([]StatusCallback, len(m.statusCallbacks))
@@ -136,7 +131,6 @@ func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemP
 		}
 	})
 
-	// 6. 立即启动（后台运行），传入 task 作为初始 query
 	go func() {
 		ctx := context.Background()
 		viewCh := make(chan agent.MessageVO, 10)
@@ -148,6 +142,18 @@ func (m *Manager) CreateSubagent(name string, subagentType SubagentType, systemP
 	}()
 
 	return id, nil
+}
+
+// GetResultChannel 获取子代理的结果 channel
+func (m *Manager) GetResultChannel(id string) (<-chan CompletionNotification, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	instance, ok := m.subagents[id]
+	if !ok {
+		return nil, fmt.Errorf("subagent not found: %s", id)
+	}
+	return instance.ResultChannel(), nil
 }
 
 // GetSubagent 根据 ID 获取子代理 (实现 SubagentSender 接口)

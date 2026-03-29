@@ -21,25 +21,24 @@ type Instance struct {
 	status          SubagentStatus
 	agentInstance   *agent.Agent
 	mu              sync.RWMutex
-	query           string       // 初始查询
-	task            string       // 任务描述
-	result          string       // 执行结果
-	messageHistory  []string     // 消息历史
+	query           string
+	task            string
+	result          string
+	messageHistory  []string
 	stopCh          chan struct{}
 	cancelTimeout   context.CancelFunc
 
-	// 看门狗相关
 	lastActivityTime time.Time
 	idleTimeout     time.Duration
 
-	// 通道供外部访问
 	viewCh    chan agent.MessageVO
 	confirmCh chan agent.ConfirmationAction
 
-	// 回调相关
 	statusCallbacks   []StatusCallback
 	completionCh      chan CompletionNotification
 	completionNotified bool
+
+	resultCh chan CompletionNotification
 }
 
 // NewInstance 创建子代理实例
@@ -86,6 +85,20 @@ func (s *Instance) SetCompletionCh(ch chan CompletionNotification) {
 	s.completionCh = ch
 }
 
+// SetResultCh 设置结果 channel（用于 spawn 工具等待）
+func (s *Instance) SetResultCh(ch chan CompletionNotification) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resultCh = ch
+}
+
+// ResultChannel 返回结果 channel（用于 get_subagent_result 工具等待）
+func (s *Instance) ResultChannel() <-chan CompletionNotification {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.resultCh
+}
+
 // notifyCompletion 通知完成状态
 func (s *Instance) notifyCompletion() {
 	s.mu.Lock()
@@ -102,20 +115,20 @@ func (s *Instance) notifyCompletion() {
 		err = fmt.Errorf("subagent execution failed")
 	}
 
-	// 保存回调列表的副本，避免在锁内调用回调
 	callbacks := make([]StatusCallback, len(s.statusCallbacks))
 	copy(callbacks, s.statusCallbacks)
 	completionCh := s.completionCh
+	resultCh := s.resultCh
 	s.mu.Unlock()
 
-	// 发送 completionCh (non-blocking)
+	notification := CompletionNotification{
+		SubagentID: s.id,
+		Status:     status,
+		Result:     result,
+		Err:        err,
+	}
+
 	if completionCh != nil {
-		notification := CompletionNotification{
-			SubagentID: s.id,
-			Status:     status,
-			Result:     result,
-			Err:        err,
-		}
 		select {
 		case completionCh <- notification:
 		default:
@@ -123,7 +136,14 @@ func (s *Instance) notifyCompletion() {
 		}
 	}
 
-	// 触发所有回调
+	if resultCh != nil {
+		select {
+		case resultCh <- notification:
+		default:
+			logging.Warn("Subagent %s resultCh full, dropping notification", s.id)
+		}
+	}
+
 	for _, callback := range callbacks {
 		callback(s.id, status, result, err)
 	}

@@ -35,7 +35,7 @@ func (t *SpawnTool) ToolName() AgentTool {
 func (t *SpawnTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        "spawn",
-		Description: openai.String("创建一个在后台运行的子代理。返回子代理 ID。"),
+		Description: openai.String("创建一个子代理执行任务。返回子代理 ID，需要调用 get_subagent_result 获取结果。"),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
@@ -74,9 +74,10 @@ func (t *SpawnTool) Execute(ctx context.Context, argumentsInJSON string) (string
 		return "", fmt.Errorf("task 参数不能为空")
 	}
 
-	// 在 task 后面追加结果要求，告知 subagent 需要提供结果摘要
 	resultInstruction := fmt.Sprintf(
-		"\n\n【重要】完成上述任务后，你必须提供一个简洁的执行结果摘要，包括：1) 发现了什么 2) 关键结论。格式：【结果】<你的摘要>",
+		"\n\n【重要】任务完成后，你必须用普通文本输出执行结果摘要（不要只使用工具调用）。"+
+			"摘要格式：\n## 执行结果\n1. 发现了什么\n2. 关键结论\n3. 相关文件路径\n\n"+
+			"必须输出文本内容，不能只调用工具。",
 	)
 	enhancedTask := args.Task + resultInstruction
 
@@ -85,20 +86,22 @@ func (t *SpawnTool) Execute(ctx context.Context, argumentsInJSON string) (string
 		subagentType = "general-purpose"
 	}
 
-	// 获取对应类型的 system prompt
 	systemPrompt := getPromptForType(subagentType)
 
-	// 创建子代理，传入 enhancedTask
 	id, err := t.creator(args.Name, subagentType, systemPrompt, enhancedTask)
 	if err != nil {
 		return "", fmt.Errorf("创建 subagent 失败: %v", err)
 	}
 
 	return fmt.Sprintf(`{"subagent_id": "%s", "type": "%s", "status": "created", "task": "%s"}`,
-		id, subagentType, args.Task), nil
+		id, subagentType, escapeJSON(args.Task)), nil
 }
 
-// getPromptForType 根据子代理类型返回对应的 system prompt
+func escapeJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b[1 : len(b)-1])
+}
+
 func getPromptForType(subagentType string) string {
 	switch subagentType {
 	case "explore":

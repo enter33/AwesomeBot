@@ -4,24 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
-
-	"github.com/enter33/AwesomeBot/internal/logging"
 )
 
 // GetResultTool 获取子代理结果的工具
 type GetResultTool struct {
-	getter func(subagentID string) string
+	getResultCh func(subagentID string) (<-chan ResultNotification, error)
+}
+
+// ResultNotification 结果通知
+type ResultNotification struct {
+	Status string // "completed", "failed", "stopped"
+	Result string
+	Err    error
 }
 
 // NewGetResultTool 创建 GetResultTool 实例
-func NewGetResultTool(getter func(subagentID string) string) *GetResultTool {
+func NewGetResultTool(getResultCh func(subagentID string) (<-chan ResultNotification, error)) *GetResultTool {
 	return &GetResultTool{
-		getter: getter,
+		getResultCh: getResultCh,
 	}
 }
 
@@ -34,13 +37,13 @@ func (t *GetResultTool) ToolName() AgentTool {
 func (t *GetResultTool) Info() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        "get_subagent_result",
-		Description: openai.String("获取子代理的完整执行结果摘要。如果返回结果中包含 [WAITING] 标记，表示子代理仍在运行中，此时不要生成任何其他输出，只需等待一段时间后再次调用此工具。"),
+		Description: openai.String("等待子代理完成并获取执行结果。此工具会阻塞直到子代理完成。"),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"subagent_id": map[string]any{
 					"type":        "string",
-					"description": "子代理 ID",
+					"description": "子代理 ID（由 spawn 工具返回）",
 				},
 			},
 			"required": []any{"subagent_id"},
@@ -62,43 +65,33 @@ func (t *GetResultTool) Execute(ctx context.Context, argumentsInJSON string) (st
 		return "", fmt.Errorf("subagent_id 不能为空")
 	}
 
-	// 轮询直到 subagent 完成
-	for {
-		result := t.getter(args.SubagentID)
-
-		// 解析结果判断状态
-		if strings.Contains(result, "[WAITING]") {
-			// subagent 仍在运行，等待后继续轮询
-			logging.Info("[subagent polling] waiting for subagent to complete...")
-
-			select {
-			case <-ctx.Done():
-				// Context 取消时，立即重新检查状态
-				// Stop() 已先设置 status = StatusStopped，所以 getter 会返回最新状态
-				result = t.getter(args.SubagentID)
-				if strings.Contains(result, "[STOPPED]") {
-					return fmt.Sprintf(`{"result": "", "status": "stopped", "error": "子代理已被终止"}`), nil
-				}
-				if strings.Contains(result, "[FAILED]") {
-					return fmt.Sprintf(`{"result": "", "status": "failed", "error": "子代理执行失败"}`), nil
-				}
-				return result, nil
-			case <-time.After(2 * time.Second):
-				continue
-			}
-		}
-
-		// 子代理不存在、已失败、已终止或有实际结果，直接返回
-		// 根据状态返回不同格式
-		if strings.Contains(result, "[FAILED]") {
-			return fmt.Sprintf(`{"result": "", "status": "failed", "error": "子代理执行失败"}`), nil
-		}
-		if strings.Contains(result, "[NOT_FOUND]") {
-			return fmt.Sprintf(`{"result": "", "status": "error", "error": "子代理不存在"}`), nil
-		}
-		if strings.Contains(result, "[STOPPED]") {
-			return fmt.Sprintf(`{"result": "", "status": "stopped", "error": "子代理已被终止"}`), nil
-		}
-		return fmt.Sprintf(`{"result": "%s"}`, result), nil
+	resultCh, err := t.getResultCh(args.SubagentID)
+	if err != nil {
+		return fmt.Sprintf(`{"status": "error", "error": "%s"}`, err.Error()), nil
 	}
+
+	select {
+	case <-ctx.Done():
+		return `{"status": "cancelled", "error": "等待被取消"}`, nil
+	case notification, ok := <-resultCh:
+		if !ok {
+			return `{"status": "error", "error": "channel closed"}`, nil
+		}
+
+		var errMsg string
+		if notification.Err != nil {
+			errMsg = notification.Err.Error()
+		}
+
+		return fmt.Sprintf(`{"status": "%s", "error": %s, "result": %s}`,
+			notification.Status, mustMarshalJSON(errMsg), mustMarshalJSON(notification.Result)), nil
+	}
+}
+
+func mustMarshalJSON(s string) string {
+	if s == "" {
+		return `""`
+	}
+	b, _ := json.Marshal(s)
+	return string(b)
 }
