@@ -27,6 +27,13 @@ type LogEntry struct {
 	Style         lipgloss.Style // 渲染样式
 	SubagentID    string         // 子代理 ID
 	SubagentName  string         // 子代理名称
+	Collapsed     bool           // 是否折叠（用于子代理输出）
+	LineCount     int            // 总行数（用于折叠时显示）
+}
+
+// ToggleCollapsed 切换折叠状态
+func (e *LogEntry) ToggleCollapsed() {
+	e.Collapsed = !e.Collapsed
 }
 
 // NewLabel 创建轮次标签
@@ -134,6 +141,18 @@ func (e *LogEntry) Render() string {
 	var prefix string
 	if e.SubagentName != "" {
 		prefix = "[" + e.SubagentName + "] "
+	}
+
+	// 子代理输出折叠/展开处理
+	if e.SubagentID != "" && e.Title != "" {
+		if e.Collapsed {
+			// 折叠状态：显示标题 + 行数
+			summary := fmt.Sprintf("%s已折叠 (%d行)", prefix, e.LineCount)
+			return e.Style.Render(summary)
+		}
+		// 展开状态：在内容前显示展开标记
+		expanded := fmt.Sprintf("%s已展开\n", prefix) + e.Content
+		return e.Style.Render(expanded)
 	}
 
 	if e.Title == "" {

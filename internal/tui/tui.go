@@ -95,6 +95,8 @@ type TuiViewModel struct {
 	agent     *agent.Agent
 
 	input string
+	inputHistory []string   // 输入历史记录
+	historyIndex int        // 当前历史索引，-1 表示当前输入
 	logs  []LogEntry
 
 	state  runState
@@ -114,6 +116,15 @@ type TuiViewModel struct {
 	// Subagent 相关
 	subagentManager *subagent.Manager
 	subagentOutputs map[string]*subagentOutput // 子代理输出缓冲区
+
+	// 日志自动清理相关
+	maxLogEntries int // 最大日志条目数，0 表示不限制
+
+	// 输入历史相关
+	savedInput string // 浏览历史时临时保存的输入
+
+	// 日志条目焦点相关
+	focusedLogIdx int // 当前焦点的日志条目索引，-1 表示无焦点
 }
 
 var (
@@ -138,12 +149,17 @@ func NewModelWithSubagentManager(agent *agent.Agent, subagentMgr *subagent.Manag
 		modelName:          modelName,
 		version:            version,
 		agent:              agent,
+		input:              "",
+		inputHistory:       make([]string, 0),
+		historyIndex:       -1,
 		logs:               make([]LogEntry, 0),
 		logsViewport:       vp,
 		confirmOptions:     []string{"允许", "拒绝", "始终允许"},
 		selectedConfirmIdx: 0,
 		subagentManager:    subagentMgr,
 		subagentOutputs:    make(map[string]*subagentOutput),
+		maxLogEntries:      500, // 默认最多保留500条日志条目
+		focusedLogIdx:      -1,  // 默认无焦点
 	}
 }
 
@@ -231,12 +247,20 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectedConfirmIdx = (m.selectedConfirmIdx - 1 + len(m.confirmOptions)) % len(m.confirmOptions)
 			return m, nil
 		}
+		// 输入历史导航（仅在 idle 状态且有历史时）
+		if m.state == stateIdle && len(m.inputHistory) > 0 {
+			return m.handleHistoryPrev()
+		}
 		m.scrollUp(1)
 		return m, nil
 	case "down":
 		if m.state == stateAwaitingConfirmation {
 			m.selectedConfirmIdx = (m.selectedConfirmIdx + 1) % len(m.confirmOptions)
 			return m, nil
+		}
+		// 输入历史导航（仅在 idle 状态且在浏览历史时）
+		if m.state == stateIdle && m.historyIndex >= 0 {
+			return m.handleHistoryNext()
 		}
 		m.scrollDown(1)
 		return m, nil
@@ -247,14 +271,30 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.scrollDown(m.logsViewportHeight())
 		return m, nil
 	case "home":
-		m.logsViewport.GotoTop()
+		if m.state == stateIdle {
+			// 在输入状态下，home 移动光标到行首（暂不支持多行编辑，简化为全选）
+			m.historyIndex = -1
+		} else {
+			m.logsViewport.GotoTop()
+		}
 		return m, nil
 	case "end":
-		m.logsViewport.GotoBottom()
+		if m.state == stateIdle {
+			// 在输入状态下，end 移动光标到行尾
+			m.historyIndex = -1
+		} else {
+			m.logsViewport.GotoBottom()
+		}
 		return m, nil
 	case "enter":
 		if m.state == stateAwaitingConfirmation {
 			return m.handleConfirmSelection()
+		}
+		// 在 idle 或 subagentRunning 状态下，尝试切换最近一个子代理日志条目的折叠状态
+		if m.state == stateIdle || m.state == stateSubagentRunning {
+			if m.toggleLastSubagentCollapse() {
+				return m, nil
+			}
 		}
 		return m.handleSubmit()
 	case "esc":
@@ -269,9 +309,35 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.abortCurrentTurn()
 		return m, nil
 	case "backspace":
-		if len(m.input) > 0 {
-			r := []rune(m.input)
-			m.input = string(r[:len(r)-1])
+		if m.state == stateIdle {
+			m.deleteCharBeforeCursor()
+		}
+		return m, nil
+	case "ctrl+u": // 清空整行
+		if m.state == stateIdle {
+			m.input = ""
+			m.historyIndex = -1
+		}
+		return m, nil
+	case "ctrl+w": // 清空光标前一个词
+		if m.state == stateIdle {
+			m.deleteWordBeforeCursor()
+		}
+		return m, nil
+	case "left":
+		if m.state == stateIdle {
+			// 移动光标位置（暂不支持可视光标，简化为历史浏览）
+			if m.historyIndex >= 0 {
+				return m.handleHistoryPrev()
+			}
+		}
+		return m, nil
+	case "right":
+		if m.state == stateIdle {
+			// 移动光标位置（暂不支持可视光标，简化为历史浏览）
+			if m.historyIndex >= 0 {
+				return m.handleHistoryNext()
+			}
 		}
 		return m, nil
 	}
@@ -282,9 +348,71 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if key := msg.Key(); key.Text != "" {
 		m.input += key.Text
+		m.historyIndex = -1 // 新输入时重置历史索引
 	}
 	return m, nil
 }
+
+// handleHistoryPrev 处理向上箭头 - 浏览上一条历史
+func (m *TuiViewModel) handleHistoryPrev() (tea.Model, tea.Cmd) {
+	if len(m.inputHistory) == 0 {
+		return m, nil
+	}
+	// 保存当前输入（如果不是从历史来的）
+	if m.historyIndex == -1 {
+		m.savedInput = m.input
+	}
+	// 移动到上一条历史
+	if m.historyIndex < len(m.inputHistory)-1 {
+		m.historyIndex++
+		m.input = m.inputHistory[len(m.inputHistory)-1-m.historyIndex]
+	}
+	return m, nil
+}
+
+// handleHistoryNext 处理向下箭头 - 浏览下一条历史
+func (m *TuiViewModel) handleHistoryNext() (tea.Model, tea.Cmd) {
+	if m.historyIndex <= 0 {
+		// 恢复到原始输入
+		m.historyIndex = -1
+		m.input = m.savedInput
+		m.savedInput = ""
+	} else {
+		m.historyIndex--
+		m.input = m.inputHistory[len(m.inputHistory)-1-m.historyIndex]
+	}
+	return m, nil
+}
+
+// deleteCharBeforeCursor 删除光标前的一个字符（暂不支持真正光标，简化为删除末尾字符）
+func (m *TuiViewModel) deleteCharBeforeCursor() {
+	if len(m.input) > 0 {
+		r := []rune(m.input)
+		m.input = string(r[:len(r)-1])
+	}
+}
+
+// deleteWordBeforeCursor 删除光标前的一个词（暂不支持真正光标，简化为删除末尾空格分隔的词）
+func (m *TuiViewModel) deleteWordBeforeCursor() {
+	if len(m.input) == 0 {
+		return
+	}
+	runes := []rune(m.input)
+	// 找到最后一个空格前的词边界
+	idx := len(runes) - 1
+	for idx >= 0 && runes[idx] == ' ' {
+		idx--
+	}
+	for idx >= 0 && runes[idx] != ' ' {
+		idx--
+	}
+	if idx < 0 {
+		m.input = ""
+	} else {
+		m.input = string(runes[:idx])
+	}
+}
+
 
 func (m *TuiViewModel) handleSubmit() (tea.Model, tea.Cmd) {
 	query := strings.TrimSpace(m.input)
@@ -313,6 +441,16 @@ func (m *TuiViewModel) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// 添加到输入历史（避免重复）
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != query {
+		m.inputHistory = append(m.inputHistory, query)
+		// 限制历史记录数量
+		if len(m.inputHistory) > 100 {
+			m.inputHistory = m.inputHistory[len(m.inputHistory)-100:]
+		}
+	}
+	m.historyIndex = -1
+	m.savedInput = ""
 	m.input = ""
 	if query == "/clear" {
 		m.clearSession()
@@ -479,6 +617,9 @@ func (m *TuiViewModel) handleStreamDone(msg streamDoneMsg) (tea.Model, tea.Cmd) 
 	}
 	m.logs = append(m.logs, NewBorder())
 
+	// 自动清理旧日志
+	m.cleanupLogs()
+
 	return m, nil
 }
 
@@ -573,8 +714,10 @@ func (m *TuiViewModel) cleanupSubagentOutput(subagentID, subagentName string, st
 		default:
 			statusText = "○ 结束"
 		}
-		// 在内容末尾添加状态
+		// 在内容末尾添加状态，完成后折叠
 		m.logs[output.lastLogIdx].Content = output.getContent() + "\n" + subagentDoneStyle.Render(statusText)
+		m.logs[output.lastLogIdx].LineCount = len(output.lines)
+		m.logs[output.lastLogIdx].Collapsed = true
 	}
 
 	// 清理缓冲区
@@ -654,12 +797,12 @@ func (m *TuiViewModel) autoConfirmSubagent(subagentID string) {
 	}
 }
 
-// appendSubagentOutput 追加子代理输出（限制3-5行滚动）
+// appendSubagentOutput 追加子代理输出（限制50行滚动）
 func (m *TuiViewModel) appendSubagentOutput(subagentID, subagentName, msgType, content string) {
 	// 获取或创建子代理输出缓冲区
 	output, exists := m.subagentOutputs[subagentID]
 	if !exists {
-		output = newSubagentOutput(5) // 最多保留5行
+		output = newSubagentOutput(50) // 最多保留50行
 		m.subagentOutputs[subagentID] = output
 	}
 
@@ -685,14 +828,17 @@ func (m *TuiViewModel) appendSubagentOutput(subagentID, subagentName, msgType, c
 	if output.lastLogIdx >= 0 && output.lastLogIdx < len(m.logs) {
 		// 更新现有条目
 		m.logs[output.lastLogIdx].Content = fullContent
+		m.logs[output.lastLogIdx].LineCount = len(output.lines)
 	} else {
-		// 创建新条目
+		// 创建新条目（运行中展开，方便查看进度）
 		entry := LogEntry{
 			Title:        subagentName,
 			Content:      fullContent,
 			Style:        contentStyle,
 			SubagentID:   subagentID,
 			SubagentName: subagentName,
+			Collapsed:    false, // 运行中展开
+			LineCount:    len(output.lines),
 		}
 		m.logs = append(m.logs, entry)
 		output.lastLogIdx = len(m.logs) - 1
@@ -743,8 +889,51 @@ func (m *TuiViewModel) startNewTurn(query string) (tea.Model, tea.Cmd) {
 func (m *TuiViewModel) clearSession() {
 	m.agent.ResetSession()
 	m.logs = m.logs[:0]
+	m.inputHistory = m.inputHistory[:0]
+	m.historyIndex = -1
+	m.savedInput = ""
 	m.notice = "会话已清空（仅保留 system prompt）。"
 	m.refreshLogsViewportContent()
+}
+
+// cleanupLogs 自动清理旧日志条目，保持在 maxLogEntries 限制内
+// 保留重要条目（border、notice）和最新内容
+func (m *TuiViewModel) cleanupLogs() {
+	if m.maxLogEntries <= 0 || len(m.logs) <= m.maxLogEntries {
+		return
+	}
+
+	// 计算需要删除的数量
+	removeCount := len(m.logs) - m.maxLogEntries
+
+	// 找到第一个可以安全删除的位置
+	// 通常跳过前几个重要条目（欢迎信息、border等）
+	keepStart := 0
+	for i, entry := range m.logs {
+		// 跳过标题类条目
+		if entry.Title == "" && strings.Contains(entry.Content, "AwesomeBot") {
+			continue
+		}
+		// 跳过边框线（但保留一些）
+		if entry.Title == "" && strings.Contains(entry.Content, "─") {
+			keepStart = i + 1
+			continue
+		}
+		break
+	}
+
+	// 确保至少保留一些条目
+	if keepStart < 2 {
+		keepStart = 2
+	}
+
+	// 如果需要删除的数量太大，从 keepStart 开始删除
+	if removeCount > keepStart {
+		m.logs = append(m.logs[:keepStart], m.logs[keepStart+removeCount:]...)
+	} else {
+		// 正常删除最旧的条目
+		m.logs = m.logs[removeCount:]
+	}
 }
 
 func (m *TuiViewModel) abortCurrentTurn() {
@@ -803,6 +992,7 @@ func (m *TuiViewModel) scrollUp(n int) {
 		return
 	}
 	m.logsViewport.ScrollUp(n)
+	m.updateFocusedLogIdx()
 }
 
 func (m *TuiViewModel) scrollDown(n int) {
@@ -810,6 +1000,7 @@ func (m *TuiViewModel) scrollDown(n int) {
 		return
 	}
 	m.logsViewport.ScrollDown(n)
+	m.updateFocusedLogIdx()
 }
 
 func (m *TuiViewModel) logsHeaderHeight() int {
@@ -836,6 +1027,51 @@ func (m *TuiViewModel) logsViewportHeight() int {
 		return 1
 	}
 	return h
+}
+
+// updateFocusedLogIdx 根据当前 viewport 位置更新焦点日志索引
+func (m *TuiViewModel) updateFocusedLogIdx() {
+	if len(m.logs) == 0 {
+		m.focusedLogIdx = -1
+		return
+	}
+
+	// 计算当前 viewport 底部对应的日志条目索引
+	// viewport.YOffset() 返回当前视口第一行的索引
+	// 我们用视口底部行的索引作为焦点
+	yOffset := m.logsViewport.YOffset()
+
+	// 统计到 yOffset 为止的可见条目数
+	visibleCount := 0
+	idx := 0
+	for ; idx < len(m.logs); idx++ {
+		rendered := strings.TrimSpace(m.logs[idx].Render())
+		if rendered != "" {
+			lines := strings.Count(rendered, "\n") + 1
+			visibleCount += lines
+			if visibleCount > yOffset {
+				break
+			}
+		}
+	}
+	if idx >= len(m.logs) {
+		idx = len(m.logs) - 1
+	}
+	m.focusedLogIdx = idx
+}
+
+// toggleLastSubagentCollapse 切换最近一个子代理日志条目的折叠状态
+// 返回 true 表示找到了并切换了，返回 false 表示没有子代理条目
+func (m *TuiViewModel) toggleLastSubagentCollapse() bool {
+	// 从后往前找最近的子代理条目
+	for i := len(m.logs) - 1; i >= 0; i-- {
+		if m.logs[i].SubagentID != "" {
+			m.logs[i].ToggleCollapsed()
+			m.refreshLogsViewportContent()
+			return true
+		}
+	}
+	return false
 }
 
 func (m *TuiViewModel) syncLogsViewportSize() {
@@ -866,7 +1102,7 @@ func (m *TuiViewModel) refreshLogsViewportContent() {
 }
 
 // refreshLogsViewportContentAfterResize 在窗口大小变化后刷新 viewport 内容
-// 窗口大小变化后，直接跳转到底部以确保内容可见
+// 尝试保持相对滚动位置，而不是强制跳到底部
 func (m *TuiViewModel) refreshLogsViewportContentAfterResize() {
 	lines := make([]string, 0, len(m.logs))
 	for _, entry := range m.logs {
@@ -876,7 +1112,13 @@ func (m *TuiViewModel) refreshLogsViewportContentAfterResize() {
 		}
 	}
 	m.logsViewport.SetContent(strings.Join(lines, "\n"))
-	m.logsViewport.GotoBottom()
+
+	// 保持滚动位置在合理范围内
+	atBottom := m.logsViewport.AtBottom()
+	if atBottom || m.logsViewport.YOffset() > len(lines)-m.logsViewport.Height() {
+		// 如果之前在底部或滚动位置超出新范围，则到底部
+		m.logsViewport.GotoBottom()
+	}
 }
 
 func (m *TuiViewModel) View() tea.View {
@@ -933,7 +1175,7 @@ func (m *TuiViewModel) View() tea.View {
 		b.WriteString(contentStyle.Render(">>> " + m.input))
 		b.WriteString("\n")
 	}
-	b.WriteString(footerStyle.Render("快捷键: Ctrl+C 退出，Esc 取消当前流式"))
+	b.WriteString(footerStyle.Render("快捷键: Ctrl+C 退出，Esc 取消 | ↑↓ 历史 | Ctrl+U 清行"))
 	b.WriteString("\n")
 	b.WriteString(footerStyle.Render("命令: /clear 清空会话"))
 	if m.notice != "" {
