@@ -139,6 +139,8 @@ func main() {
 		tool.NewWriteToolWithResolver(pathResolver),
 		tool.NewEditToolWithResolver(pathResolver),
 		tool.NewListDirToolWithResolver(pathResolver),
+		tool.NewGlobToolWithResolver(pathResolver),
+		tool.NewGrepToolWithResolver(pathResolver),
 		tool.CreateBashTool(workspaceDir),
 		tool.NewLoadSkillTool(),
 		tool.NewTodoTool(),

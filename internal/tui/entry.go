@@ -112,12 +112,11 @@ func NewToolConfirmation(toolName, arguments string) LogEntry {
 }
 
 // NewTokenUsage 创建 Token 用量信息
-func NewTokenUsage(promptTokens, completionTokens, totalTokens int, speed float64, duration float64) LogEntry {
+func NewTokenUsage(promptTokens, completionTokens, totalTokens int, duration float64) LogEntry {
 	// 将 token 数转换为 k 单位
 	totalK := float64(totalTokens) / 1000.0
-	speedK := speed / 1000.0
-	content := fmt.Sprintf("Total: %.2fk | Speed: %.2fk tok/s | Duration: %.2fs",
-		totalK, speedK, duration)
+	content := fmt.Sprintf("Total: %.2fk | Duration: %.2fs",
+		totalK, duration)
 	return LogEntry{
 		Title:   "Token 用量",
 		Content: content,

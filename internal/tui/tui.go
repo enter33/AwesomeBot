@@ -354,7 +354,6 @@ func (m *TuiViewModel) handleStreamEvent(event agent.MessageVO) {
 				event.TokenUsage.PromptTokens,
 				event.TokenUsage.CompletionTokens,
 				event.TokenUsage.TotalTokens,
-				event.TokenUsage.Speed,
 				event.TokenUsage.Duration,
 			))
 			m.refreshLogsViewportContent()
