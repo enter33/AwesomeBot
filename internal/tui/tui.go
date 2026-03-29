@@ -290,13 +290,11 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.state == stateAwaitingConfirmation {
 			return m.handleConfirmSelection()
 		}
-		// 在 idle 或 subagentRunning 状态下，尝试切换最近一个子代理日志条目的折叠状态
-		if m.state == stateIdle || m.state == stateSubagentRunning {
-			if m.toggleLastSubagentCollapse() {
-				return m, nil
-			}
-		}
 		return m.handleSubmit()
+	case "ctrl+o":
+		// 切换最近一个子代理日志条目的折叠状态
+		m.toggleLastSubagentCollapse()
+		return m, nil
 	case "esc":
 		if m.state == stateAwaitingConfirmation {
 			// 拒绝并退出
