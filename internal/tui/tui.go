@@ -97,6 +97,7 @@ type TuiViewModel struct {
 	input string
 	inputHistory []string   // 输入历史记录
 	historyIndex int        // 当前历史索引，-1 表示当前输入
+	cursorPos    int        // 光标位置（rune 索引，0=最左，len(input)=最右）
 	logs  []LogEntry
 
 	state  runState
@@ -134,6 +135,7 @@ var (
 	footerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	borderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	contentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	cursorStyle  = lipgloss.NewStyle().Reverse(true)
 )
 
 func NewModel(agent *agent.Agent, modelName, version string) *TuiViewModel {
@@ -152,6 +154,7 @@ func NewModelWithSubagentManager(agent *agent.Agent, subagentMgr *subagent.Manag
 		input:              "",
 		inputHistory:       make([]string, 0),
 		historyIndex:       -1,
+		cursorPos:          0,
 		logs:               make([]LogEntry, 0),
 		logsViewport:       vp,
 		confirmOptions:     []string{"允许", "拒绝", "始终允许"},
@@ -207,9 +210,14 @@ func (m *TuiViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:
-		// Handle paste from clipboard
+		// Handle paste from clipboard - 在光标位置插入
 		if m.state == stateIdle {
-			m.input += msg.Content
+			runes := []rune(m.input)
+			newRunes := append(runes[:m.cursorPos], []rune(msg.Content)...)
+			newRunes = append(newRunes, runes[m.cursorPos:]...)
+			m.input = string(newRunes)
+			m.cursorPos += len(msg.Content)
+			m.historyIndex = -1
 		}
 		return m, nil
 	case streamMsg:
@@ -272,7 +280,8 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "home":
 		if m.state == stateIdle {
-			// 在输入状态下，home 移动光标到行首（暂不支持多行编辑，简化为全选）
+			// 移动光标到行首
+			m.cursorPos = 0
 			m.historyIndex = -1
 		} else {
 			m.logsViewport.GotoTop()
@@ -280,7 +289,8 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "end":
 		if m.state == stateIdle {
-			// 在输入状态下，end 移动光标到行尾
+			// 移动光标到行尾
+			m.cursorPos = len(m.input)
 			m.historyIndex = -1
 		} else {
 			m.logsViewport.GotoBottom()
@@ -314,6 +324,7 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u": // 清空整行
 		if m.state == stateIdle {
 			m.input = ""
+			m.cursorPos = 0
 			m.historyIndex = -1
 		}
 		return m, nil
@@ -324,7 +335,12 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "left":
 		if m.state == stateIdle {
-			// 移动光标位置（暂不支持可视光标，简化为历史浏览）
+			// 优先移动光标
+			if m.cursorPos > 0 {
+				m.cursorPos--
+				return m, nil
+			}
+			// 光标在最左端且正在浏览历史时，切到上一条
 			if m.historyIndex >= 0 {
 				return m.handleHistoryPrev()
 			}
@@ -332,7 +348,12 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "right":
 		if m.state == stateIdle {
-			// 移动光标位置（暂不支持可视光标，简化为历史浏览）
+			// 优先移动光标
+			if m.cursorPos < len(m.input) {
+				m.cursorPos++
+				return m, nil
+			}
+			// 光标在最右端且正在浏览历史时，切到下一条
 			if m.historyIndex >= 0 {
 				return m.handleHistoryNext()
 			}
@@ -345,7 +366,12 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key := msg.Key(); key.Text != "" {
-		m.input += key.Text
+		// 在光标位置插入文本
+		runes := []rune(m.input)
+		newRunes := append(runes[:m.cursorPos], []rune(key.Text)...)
+		newRunes = append(newRunes, runes[m.cursorPos:]...)
+		m.input = string(newRunes)
+		m.cursorPos += len(key.Text)
 		m.historyIndex = -1 // 新输入时重置历史索引
 	}
 	return m, nil
@@ -364,6 +390,7 @@ func (m *TuiViewModel) handleHistoryPrev() (tea.Model, tea.Cmd) {
 	if m.historyIndex < len(m.inputHistory)-1 {
 		m.historyIndex++
 		m.input = m.inputHistory[len(m.inputHistory)-1-m.historyIndex]
+		m.cursorPos = len(m.input) // 光标移到末尾
 	}
 	return m, nil
 }
@@ -379,36 +406,41 @@ func (m *TuiViewModel) handleHistoryNext() (tea.Model, tea.Cmd) {
 		m.historyIndex--
 		m.input = m.inputHistory[len(m.inputHistory)-1-m.historyIndex]
 	}
+	m.cursorPos = len(m.input) // 光标移到末尾
 	return m, nil
 }
 
-// deleteCharBeforeCursor 删除光标前的一个字符（暂不支持真正光标，简化为删除末尾字符）
+// deleteCharBeforeCursor 删除光标前的一个字符
 func (m *TuiViewModel) deleteCharBeforeCursor() {
-	if len(m.input) > 0 {
-		r := []rune(m.input)
-		m.input = string(r[:len(r)-1])
-	}
-}
-
-// deleteWordBeforeCursor 删除光标前的一个词（暂不支持真正光标，简化为删除末尾空格分隔的词）
-func (m *TuiViewModel) deleteWordBeforeCursor() {
-	if len(m.input) == 0 {
+	if m.cursorPos == 0 {
 		return
 	}
 	runes := []rune(m.input)
-	// 找到最后一个空格前的词边界
-	idx := len(runes) - 1
+	m.cursorPos--
+	m.input = string(runes[:m.cursorPos]) + string(runes[m.cursorPos+1:])
+}
+
+// deleteWordBeforeCursor 删除光标前的一个词
+func (m *TuiViewModel) deleteWordBeforeCursor() {
+	if m.cursorPos == 0 {
+		return
+	}
+	runes := []rune(m.input)
+	idx := m.cursorPos - 1
+
+	// 跳过空格
 	for idx >= 0 && runes[idx] == ' ' {
 		idx--
 	}
+	// 找到词边界
+	wordEnd := idx + 1
 	for idx >= 0 && runes[idx] != ' ' {
 		idx--
 	}
-	if idx < 0 {
-		m.input = ""
-	} else {
-		m.input = string(runes[:idx])
-	}
+
+	wordStart := idx + 1
+	m.input = string(runes[:wordStart]) + string(runes[wordEnd:])
+	m.cursorPos = wordStart
 }
 
 
@@ -450,6 +482,7 @@ func (m *TuiViewModel) handleSubmit() (tea.Model, tea.Cmd) {
 	m.historyIndex = -1
 	m.savedInput = ""
 	m.input = ""
+	m.cursorPos = 0
 	if query == "/clear" {
 		m.clearSession()
 		return m, nil
@@ -890,6 +923,8 @@ func (m *TuiViewModel) clearSession() {
 	m.inputHistory = m.inputHistory[:0]
 	m.historyIndex = -1
 	m.savedInput = ""
+	m.input = ""
+	m.cursorPos = 0
 	m.notice = "会话已清空（仅保留 system prompt）。"
 	m.refreshLogsViewportContent()
 }
@@ -1170,7 +1205,16 @@ func (m *TuiViewModel) View() tea.View {
 		b.WriteString(footerStyle.Render("↑↓ 选择  Enter 确认  Esc 拒绝"))
 		b.WriteString("\n")
 	} else if m.state != stateSubagentRunning {
-		b.WriteString(contentStyle.Render(">>> " + m.input))
+		// 渲染带光标的输入行
+		runes := []rune(m.input)
+		if m.cursorPos > len(runes) {
+			m.cursorPos = len(runes)
+		}
+		before := string(runes[:m.cursorPos])
+		after := string(runes[m.cursorPos:])
+		b.WriteString(contentStyle.Render(">>> " + before))
+		b.WriteString(cursorStyle.Render(" ")) // 光标
+		b.WriteString(contentStyle.Render(after))
 		b.WriteString("\n")
 	}
 	b.WriteString(footerStyle.Render("快捷键: Ctrl+C 退出，Esc 取消 | ↑↓ 历史 | Ctrl+U 清行"))
