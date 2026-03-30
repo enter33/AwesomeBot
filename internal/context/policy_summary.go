@@ -42,6 +42,13 @@ func (p *SummaryPolicy) CanApplyDuringToolLoop() bool {
 }
 
 func (p *SummaryPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult, error) {
+	if p.Summarizer == nil {
+		return PolicyResult{
+			Messages:      engine.messages,
+			ContextTokens: engine.contextTokens,
+		}, nil
+	}
+
 	if len(engine.messages) <= p.KeepRecentMessages {
 		return PolicyResult{
 			Messages:      engine.messages,

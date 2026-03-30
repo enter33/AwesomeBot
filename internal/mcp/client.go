@@ -7,6 +7,8 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openai/openai-go/v3"
@@ -16,6 +18,23 @@ import (
 	"github.com/enter33/AwesomeBot/pkg/config"
 )
 
+// 连接状态
+type ConnStatus int
+
+const (
+	StatusDisconnected ConnStatus = iota
+	StatusConnecting
+	StatusConnected
+	StatusError
+)
+
+const (
+	// 默认 ping 存活最大时间
+	DefaultMaxPingAge = 5 * time.Minute
+	// 默认工具调用超时
+	DefaultToolTimeout = 120 * time.Second
+)
+
 type Client struct {
 	name         string
 	client       *mcp.Client
@@ -23,6 +42,11 @@ type Client struct {
 
 	session *mcp.ClientSession
 	tools   []tool.Tool
+
+	mu         sync.RWMutex
+	status     ConnStatus
+	lastPing   time.Time
+	maxPingAge time.Duration
 }
 
 // NewClient 创建 MCP 客户端
@@ -36,7 +60,16 @@ func NewClient(name string, server config.McpServerConfig) *Client {
 		}, nil),
 		serverConfig: server.ReplacePlaceholders(initRunningVars()),
 		tools:        make([]tool.Tool, 0),
+		status:       StatusDisconnected,
+		maxPingAge:   DefaultMaxPingAge,
 	}
+}
+
+// Status 获取连接状态
+func (e *Client) Status() ConnStatus {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.status
 }
 
 func initRunningVars() map[string]string {
@@ -50,10 +83,29 @@ func (e *Client) Name() string {
 }
 
 func (e *Client) connect(ctx context.Context) error {
-	// 服务联通，不需要再初始化
-	if e.session != nil && e.session.Ping(ctx, &mcp.PingParams{}) == nil {
-		return nil
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// 如果已有 session，先检测是否有效
+	if e.session != nil {
+		// 带超时的 ping context，避免在断开的连接上阻塞太久
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		if e.session.Ping(pingCtx, &mcp.PingParams{}) == nil {
+			// 连接有效，更新 lastPing（如果距离上次太久了）
+			if time.Since(e.lastPing) >= e.maxPingAge {
+				e.lastPing = time.Now()
+			}
+			e.status = StatusConnected
+			return nil
+		}
+		// 连接无效，关闭旧 session
+		e.closeSession()
 	}
+
+	// 建立新连接
+	e.status = StatusConnecting
 	var err error
 	if e.serverConfig.IsStdio() {
 		cmd := exec.Command(e.serverConfig.Command, e.serverConfig.Args...)
@@ -65,10 +117,37 @@ func (e *Client) connect(ctx context.Context) error {
 		e.session, err = e.client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: e.serverConfig.Url}, nil)
 	}
 	if err != nil {
-		return err
+		e.status = StatusError
+		return fmt.Errorf("failed to connect to MCP server %s: %w", e.name, err)
 	}
 
+	// 验证连接
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if e.session.Ping(pingCtx, &mcp.PingParams{}) != nil {
+		e.status = StatusError
+		return fmt.Errorf("MCP server %s connection verification failed", e.name)
+	}
+
+	e.lastPing = time.Now()
+	e.status = StatusConnected
 	return nil
+}
+
+// closeSession 关闭 session（内部调用，不加锁）
+func (e *Client) closeSession() {
+	if e.session != nil {
+		e.session.Close()
+		e.session = nil
+	}
+}
+
+// Close 关闭客户端连接
+func (e *Client) Close() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.closeSession()
+	e.status = StatusDisconnected
 }
 
 // RefreshTools 刷新工具列表
@@ -82,17 +161,18 @@ func (e *Client) RefreshTools(ctx context.Context) error {
 		return err
 	}
 
+	e.mu.Lock()
 	e.tools = make([]tool.Tool, 0)
 	for _, mcpTool := range mcpToolResult.Tools {
 		agentTool := &McpTool{
 			client:   e,
 			toolName: mcpTool.Name,
-			session:  e.session,
 			mcpTool:  mcpTool,
 		}
 
 		e.tools = append(e.tools, agentTool)
 	}
+	e.mu.Unlock()
 	return nil
 }
 
@@ -105,14 +185,36 @@ func (e *Client) callTool(ctx context.Context, toolName string, argumentsInJSON 
 	if err := e.connect(ctx); err != nil {
 		return "", err
 	}
-	mcpResult, err := e.session.CallTool(ctx, &mcp.CallToolParams{
+
+	// 创建带超时的 context
+	toolCtx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+	defer cancel()
+
+	mcpResult, err := e.session.CallTool(toolCtx, &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: json.RawMessage(argumentsInJSON),
 	})
 	if err != nil {
+		// 检查是否是超时
+		if toolCtx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("tool call timed out after %v", DefaultToolTimeout)
+		}
 		log.Printf("failed to call tool: %v", err)
+
+		// 如果调用失败，检查连接是否断开，标记需要重连
+		e.mu.Lock()
+		if e.session != nil && e.session.Ping(ctx, &mcp.PingParams{}) != nil {
+			e.status = StatusDisconnected
+		}
+		e.mu.Unlock()
+
 		return "", err
 	}
+
+	// 更新 lastPing
+	e.mu.Lock()
+	e.lastPing = time.Now()
+	e.mu.Unlock()
 
 	var builder strings.Builder
 	for _, content := range mcpResult.Content {
@@ -127,7 +229,6 @@ func (e *Client) callTool(ctx context.Context, toolName string, argumentsInJSON 
 type McpTool struct {
 	toolName string // 给 mcp server 看的，和给模型看的不一样
 	client   *Client
-	session  *mcp.ClientSession
 	mcpTool  *mcp.Tool
 }
 

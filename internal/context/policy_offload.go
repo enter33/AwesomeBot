@@ -58,6 +58,7 @@ func (p *OffloadPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 	contextTokens := engine.contextTokens
 
 	offloadCount := len(messages) - p.KeepRecentMessages
+	offloadIndex := 0
 
 	for i := 0; i < offloadCount; i++ {
 		// 只卸载 tool 类型
@@ -78,7 +79,8 @@ func (p *OffloadPolicy) Apply(ctx context.Context, engine *Engine) (PolicyResult
 		// 计算原始消息的 token 数
 		oldTokens := messages[i].Tokens
 
-		key := p.makeStorageKey(i)
+		key := p.makeStorageKey(offloadIndex)
+		offloadIndex++
 		if err := p.Storage.Store(ctx, key, *contentStr); err != nil {
 			log.Printf("failed to store offload message: %v", err)
 			continue
