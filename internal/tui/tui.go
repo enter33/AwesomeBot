@@ -90,15 +90,16 @@ func (so *subagentOutput) getContent() string {
 }
 
 type TuiViewModel struct {
-	modelName string
-	version   string
-	agent     *agent.Agent
+	modelName  string
+	version    string
+	workingDir string
+	agent      *agent.Agent
 
-	input string
-	inputHistory []string   // 输入历史记录
-	historyIndex int        // 当前历史索引，-1 表示当前输入
-	cursorPos    int        // 光标位置（rune 索引，0=最左，len(input)=最右）
-	logs  []LogEntry
+	input        string
+	inputHistory []string // 输入历史记录
+	historyIndex int      // 当前历史索引，-1 表示当前输入
+	cursorPos    int      // 光标位置（rune 索引，0=最左，len(input)=最右）
+	logs         []LogEntry
 
 	state  runState
 	active *activeStream
@@ -150,6 +151,7 @@ func NewModelWithSubagentManager(agent *agent.Agent, subagentMgr *subagent.Manag
 	return &TuiViewModel{
 		modelName:          modelName,
 		version:            version,
+		workingDir:         getWorkingDirName(),
 		agent:              agent,
 		input:              "",
 		inputHistory:       make([]string, 0),
@@ -1037,7 +1039,7 @@ func (m *TuiViewModel) scrollDown(n int) {
 }
 
 func (m *TuiViewModel) logsHeaderHeight() int {
-	return 4
+	return 5
 }
 
 func (m *TuiViewModel) logsFooterHeight() int {
@@ -1157,17 +1159,13 @@ func (m *TuiViewModel) refreshLogsViewportContentAfterResize() {
 func (m *TuiViewModel) View() tea.View {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("AwesomeBot TUI (Bubble Tea)"))
-	b.WriteString("\n")
-	b.WriteString(borderStyle.Render(strings.Repeat("─", 48)))
-	b.WriteString("\n")
-	b.WriteString(contentStyle.Render("欢迎使用 AwesomeBot！输入问题后回车。"))
-	b.WriteString("\n")
-	b.WriteString(labelStyle.Render("模型: "))
-	b.WriteString(contentStyle.Render(m.modelName))
-	b.WriteString(" | ")
-	b.WriteString(labelStyle.Render("版本: "))
-	b.WriteString(contentStyle.Render(m.version))
+	headerInfo := HeaderInfo{
+		WorkingDir: m.workingDir,
+		ModelName:  m.modelName,
+		Version:    m.version,
+		Width:      m.width,
+	}
+	b.WriteString(RenderHeader(headerInfo))
 	b.WriteString("\n")
 
 	// 显示 subagent 状态（只显示运行中的）
