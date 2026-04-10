@@ -655,6 +655,16 @@ awesomebot/
 
 ## 更新日志
 
+### v1.3.4
+
+**性能优化：**
+
+- **工具并行执行优化**：只读工具（read/glob/grep/list/web_search/web_fetch）并行执行，显著提升效率
+- **Token 计算优化**：修复消息 token 计算不准确的问题，考虑了消息类型和 tool_calls 的 overhead
+- **记忆更新异步化**：记忆更新改为后台异步执行，不阻塞主流程
+- **MCP 健康检测**：新增 MCP 服务器后台健康检测和自动重连机制
+- **MemoryUpdateThreshold 默认值调整**：从 5 调整为 2，减少记忆更新延迟
+
 ### v1.3.3
 
 **新功能：**

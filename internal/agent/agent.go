@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	// "math/rand"
+	"sync"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -260,6 +261,13 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			break
 		}
 
+		// 分类工具：串行工具（写工具 + 需要确认的工具）和并行工具（只读工具）
+		var parallelToolCalls []struct {
+			index    int
+			toolCall openai.ChatCompletionMessageToolCallUnion
+			tool     tool.Tool
+		}
+
 		for _, toolCall := range message.ToolCalls {
 			// 记录工具调用
 			logging.Info("========== 工具调用 ==========")
@@ -286,69 +294,191 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			toolName := t.ToolName()
 			needConfirm := a.confirmConfig.RequireConfirmTools[toolName] && !a.alwaysAllowTools[toolName]
 
-			if needConfirm {
-				confirmReq := ToolConfirmationVO{
-					ToolName:  toolCall.Function.Name,
-					Arguments: toolCall.Function.Arguments,
-				}
-				viewCh <- MessageVO{
-					Type:                    MessageTypeToolConfirm,
-					ToolConfirmationRequest: &confirmReq,
-				}
+			// 只读工具标识
+			isReadOnlyTool := toolName == tool.AgentToolRead ||
+				toolName == tool.AgentToolGlob ||
+				toolName == tool.AgentToolGrep ||
+				toolName == tool.AgentToolList ||
+				toolName == tool.AgentToolWebSearch ||
+				toolName == tool.AgentToolWebFetch
 
-				select {
-				case <-ctx.Done():
-					return nil
-				case action := <-confirmCh:
-					switch action {
-					case ConfirmReject:
-						logging.Info("用户拒绝工具调用: %s", toolCall.Function.Name)
-						toolMsg := openai.ToolMessage("user rejected tool call", toolCall.ID)
-						messages = append(messages, toolMsg)
-						draft.NewMessages = append(draft.NewMessages, toolMsg)
-						continue
-					case ConfirmAlwaysAllow:
-						logging.Info("用户选择始终允许工具: %s", toolCall.Function.Name)
-						a.alwaysAllowTools[toolName] = true
-					case ConfirmAllow:
-						logging.Info("用户允许工具调用: %s", toolCall.Function.Name)
+			// 需要确认的工具或写工具走串行执行
+			if needConfirm || !isReadOnlyTool {
+				// 处理确认（串行阻塞）
+				if needConfirm {
+					confirmReq := ToolConfirmationVO{
+						ToolName:  toolCall.Function.Name,
+						Arguments: toolCall.Function.Arguments,
+					}
+					viewCh <- MessageVO{
+						Type:                    MessageTypeToolConfirm,
+						ToolConfirmationRequest: &confirmReq,
+					}
+
+					select {
+					case <-ctx.Done():
+						return nil
+					case action := <-confirmCh:
+						switch action {
+						case ConfirmReject:
+							logging.Info("用户拒绝工具调用: %s", toolCall.Function.Name)
+							toolMsg := openai.ToolMessage("user rejected tool call", toolCall.ID)
+							messages = append(messages, toolMsg)
+							draft.NewMessages = append(draft.NewMessages, toolMsg)
+							continue
+						case ConfirmAlwaysAllow:
+							logging.Info("用户选择始终允许工具: %s", toolCall.Function.Name)
+							a.alwaysAllowTools[toolName] = true
+						case ConfirmAllow:
+							logging.Info("用户允许工具调用: %s", toolCall.Function.Name)
+						}
 					}
 				}
-			}
 
-			toolResult, err := t.Execute(ctx, toolCall.Function.Arguments)
+				// 串行执行写工具
+				toolResult, err := t.Execute(ctx, toolCall.Function.Arguments)
 
-			// 记录工具执行结果
-			if err != nil {
-				logging.Error("工具执行错误: %s, Error: %v", toolCall.Function.Name, err)
-				// 如果 toolResult 为空才用错误信息覆盖
-				if toolResult == "" {
-					toolResult = err.Error()
+				// 记录工具执行结果
+				if err != nil {
+					logging.Error("工具执行错误: %s, Error: %v", toolCall.Function.Name, err)
+					if toolResult == "" {
+						toolResult = err.Error()
+					}
+					viewCh <- MessageVO{
+						Type:    MessageTypeError,
+						Content: &toolResult,
+					}
+				} else {
+					logging.Info("工具执行成功: %s", toolCall.Function.Name)
+					logging.Debug("工具返回内容: %s", truncateString(toolResult, 500))
 				}
+
 				viewCh <- MessageVO{
-					Type:    MessageTypeError,
-					Content: &toolResult,
+					Type: MessageTypeToolCall,
+					ToolCall: &ToolCallVO{
+						Name:      toolCall.Function.Name,
+						Arguments: toolCall.Function.Arguments,
+					},
 				}
+
+				if onActivity != nil {
+					onActivity()
+				}
+
+				toolMsg := openai.ToolMessage(toolResult, toolCall.ID)
+				messages = append(messages, toolMsg)
+				draft.NewMessages = append(draft.NewMessages, toolMsg)
 			} else {
-				logging.Info("工具执行成功: %s", toolCall.Function.Name)
-				logging.Debug("工具返回内容: %s", truncateString(toolResult, 500))
+				// 只读工具，收集后并行执行
+				parallelToolCalls = append(parallelToolCalls, struct {
+					index    int
+					toolCall openai.ChatCompletionMessageToolCallUnion
+					tool     tool.Tool
+				}{
+					index:    len(parallelToolCalls),
+					toolCall: toolCall,
+					tool:     t,
+				})
+			}
+		}
+
+		// 并行执行只读工具
+		if len(parallelToolCalls) > 0 {
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			parallelResults := make([]struct {
+				result     string
+				err        error
+				toolCall   openai.ChatCompletionMessageToolCallUnion
+				toolName   string
+			}, len(parallelToolCalls))
+
+			for i, pt := range parallelToolCalls {
+				wg.Add(1)
+				go func(idx int, ptc openai.ChatCompletionMessageToolCallUnion, t tool.Tool) {
+					defer wg.Done()
+
+					// 检查取消
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					result, err := t.Execute(ctx, ptc.Function.Arguments)
+
+					mu.Lock()
+					parallelResults[idx] = struct {
+						result     string
+						err        error
+						toolCall   openai.ChatCompletionMessageToolCallUnion
+						toolName   string
+					}{
+						result:   result,
+						err:      err,
+						toolCall: ptc,
+						toolName: t.ToolName(),
+					}
+					mu.Unlock()
+				}(i, pt.toolCall, pt.tool)
 			}
 
-			viewCh <- MessageVO{
-				Type: MessageTypeToolCall,
-				ToolCall: &ToolCallVO{
-					Name:      toolCall.Function.Name,
-					Arguments: toolCall.Function.Arguments,
-				},
+			// 等待所有并行工具完成，支持取消
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-ctx.Done():
+				// 用户取消，等待 goroutine 结束（它们会自然结束因为 ctx 已取消）
+				wg.Wait()
+			case <-done:
+				// 并行执行完成
 			}
 
-			if onActivity != nil {
-				onActivity()
-			}
+			// 处理并行工具结果（按原始顺序）
+			for _, pr := range parallelResults {
+				if pr.toolName == "" {
+					// ctx 被取消
+					toolMsg := openai.ToolMessage("tool cancelled", pr.toolCall.ID)
+					messages = append(messages, toolMsg)
+					draft.NewMessages = append(draft.NewMessages, toolMsg)
+					continue
+				}
 
-			toolMsg := openai.ToolMessage(toolResult, toolCall.ID)
-			messages = append(messages, toolMsg)
-			draft.NewMessages = append(draft.NewMessages, toolMsg)
+				toolResult := pr.result
+				if pr.err != nil {
+					logging.Error("工具执行错误: %s, Error: %v", pr.toolName, pr.err)
+					if toolResult == "" {
+						toolResult = pr.err.Error()
+					}
+					viewCh <- MessageVO{
+						Type:    MessageTypeError,
+						Content: &toolResult,
+					}
+				} else {
+					logging.Info("工具执行成功: %s", pr.toolName)
+					logging.Debug("工具返回内容: %s", truncateString(toolResult, 500))
+				}
+
+				viewCh <- MessageVO{
+					Type: MessageTypeToolCall,
+					ToolCall: &ToolCallVO{
+						Name:      pr.toolCall.Function.Name,
+						Arguments: pr.toolCall.Function.Arguments,
+					},
+				}
+
+				if onActivity != nil {
+					onActivity()
+				}
+
+				toolMsg := openai.ToolMessage(toolResult, pr.toolCall.ID)
+				messages = append(messages, toolMsg)
+				draft.NewMessages = append(draft.NewMessages, toolMsg)
+			}
 		}
 
 		// 每次循环后检查 context 是否被取消（用户按 ESC）

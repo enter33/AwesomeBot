@@ -47,6 +47,8 @@ type Client struct {
 	status     ConnStatus
 	lastPing   time.Time
 	maxPingAge time.Duration
+
+	stopCh chan struct{}
 }
 
 // NewClient 创建 MCP 客户端
@@ -131,6 +133,11 @@ func (e *Client) connect(ctx context.Context) error {
 
 	e.lastPing = time.Now()
 	e.status = StatusConnected
+
+	// 启动健康检测
+	e.stopCh = make(chan struct{})
+	go e.startHealthCheck(ctx)
+
 	return nil
 }
 
@@ -142,8 +149,58 @@ func (e *Client) closeSession() {
 	}
 }
 
+// startHealthCheck 启动后台健康检测 goroutine
+func (e *Client) startHealthCheck(ctx context.Context) {
+	ticker := time.NewTicker(e.maxPingAge)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.stopCh:
+			return
+		case <-ticker.C:
+			e.mu.RLock()
+			session := e.session
+			e.mu.RUnlock()
+
+			if session == nil {
+				continue
+			}
+
+			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := session.Ping(pingCtx, &mcp.PingParams{})
+			cancel()
+
+			if err != nil {
+				log.Printf("MCP server %s health check failed: %v, attempting reconnect", e.name, err)
+
+				reconnectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				reconnectErr := e.connect(reconnectCtx)
+				cancel()
+
+				if reconnectErr != nil {
+					log.Printf("MCP server %s reconnect failed: %v", e.name, reconnectErr)
+				} else {
+					log.Printf("MCP server %s reconnected successfully", e.name)
+				}
+			} else {
+				e.mu.Lock()
+				e.lastPing = time.Now()
+				e.mu.Unlock()
+			}
+		}
+	}
+}
+
 // Close 关闭客户端连接
 func (e *Client) Close() {
+	// 停止健康检测 goroutine
+	if e.stopCh != nil {
+		close(e.stopCh)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.closeSession()

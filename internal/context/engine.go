@@ -109,7 +109,6 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 		return nil
 	}
 
-	// 更新记忆（先于上下文压缩）
 	if c.memory != nil {
 		shouldNotify := c.memory.ShouldNotify()
 		if shouldNotify {
@@ -117,15 +116,21 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 				c.onMemoryEvent(true, nil)
 			}
 		}
-		err := c.memory.Update(ctx, draft.NewMessages)
-		if shouldNotify {
-			if c.onMemoryEvent != nil {
-				c.onMemoryEvent(false, err)
+		go func() {
+			err := c.memory.Update(ctx, draft.NewMessages, func(newMemory memory.MemoryContent, notify bool, updateErr error) {
+				if notify {
+					if c.onMemoryEvent != nil {
+						c.onMemoryEvent(false, updateErr)
+					}
+				}
+				if updateErr != nil {
+					log.Printf("async memory update failed: %v", updateErr)
+				}
+			})
+			if err != nil {
+				log.Printf("failed to start async memory update: %v", err)
 			}
-		}
-		if err != nil {
-			return err
-		}
+		}()
 	}
 
 	if err := c.applyPolicies(ctx); err != nil {

@@ -5,6 +5,8 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 
@@ -55,12 +57,14 @@ func (c *ConditionalMemoryUpdater) ShouldNotify() bool {
 	return c.useMemory
 }
 
-func (c *ConditionalMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
-	// 如果 useMemory 为 false，不执行更新，直接返回原 memory
+func (c *ConditionalMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage, onDone UpdateCallback) (MemoryContent, error) {
 	if !c.useMemory {
+		if onDone != nil {
+			onDone(oldMemory, false, nil)
+		}
 		return oldMemory, nil
 	}
-	return c.updater.Update(ctx, oldMemory, newMessages)
+	return c.updater.Update(ctx, oldMemory, newMessages, onDone)
 }
 
 // ThrottledMemoryUpdater 基于对话轮数的节流更新器
@@ -69,6 +73,8 @@ type ThrottledMemoryUpdater struct {
 	threshold int                      // 阈值，达到此轮数才执行更新
 	counter   int                      // 当前计数器
 	messages   []config.OpenAIMessage   // 累积的消息队列
+	running   bool                      // 是否正在执行异步更新
+	mu        sync.Mutex                // 保护 running 状态
 }
 
 // NewThrottledMemoryUpdater 创建节流更新器
@@ -78,6 +84,7 @@ func NewThrottledMemoryUpdater(updater MemoryUpdater, threshold int) *ThrottledM
 		threshold: threshold,
 		counter:   0,
 		messages:  nil,
+		running:   false,
 	}
 }
 
@@ -89,34 +96,97 @@ func (t *ThrottledMemoryUpdater) ShouldNotify() bool {
 	if !t.updater.Enabled() {
 		return false
 	}
-	return t.counter+1 >= t.threshold // 下一轮是否满足更新条件
+	t.mu.Lock()
+	running := t.running
+	t.mu.Unlock()
+	if running {
+		return false
+	}
+	return t.counter+1 >= t.threshold
 }
 
-func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
-	// 如果 updater 未启用，直接返回原 memory
+func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage, onDone UpdateCallback) (MemoryContent, error) {
 	if !t.updater.Enabled() {
+		if onDone != nil {
+			onDone(oldMemory, false, nil)
+		}
 		return oldMemory, nil
 	}
 
-	// 累积消息
 	t.messages = append(t.messages, newMessages...)
 	t.counter++
 
-	// 达到阈值，执行更新并重置计数器和消息队列
-	if t.counter >= t.threshold {
-		t.counter = 0
-		result, err := t.updater.Update(ctx, oldMemory, t.messages)
-		// 更新后清空累积队列
-		t.messages = nil
-		return result, err
+	t.mu.Lock()
+	if t.running {
+		t.mu.Unlock()
+		if onDone != nil {
+			onDone(oldMemory, false, nil)
+		}
+		return oldMemory, nil
 	}
 
-	// 未达到阈值，不执行更新
+	if t.counter >= t.threshold {
+		t.running = true
+		t.mu.Unlock()
+
+		messagesToUpdate := t.messages
+		currentMemory := oldMemory
+
+		go func() {
+			t.updater.Update(ctx, currentMemory, messagesToUpdate, func(newMem MemoryContent, _ bool, err error) {
+				if onDone != nil {
+					onDone(newMem, true, err)
+				}
+
+				t.mu.Lock()
+				pendingMessages := t.messages
+				pendingCount := t.counter
+
+				if len(pendingMessages) > 0 && pendingCount >= t.threshold {
+					t.running = true
+					nextMessages := pendingMessages
+					nextMemory := newMem
+					t.mu.Unlock()
+
+					go func() {
+						t.mu.Lock()
+						t.counter = 0
+						t.messages = nil
+						t.mu.Unlock()
+
+						t.updater.Update(ctx, nextMemory, nextMessages, func(finalMem MemoryContent, _ bool, finalErr error) {
+							t.mu.Lock()
+							t.running = false
+							t.mu.Unlock()
+							if onDone != nil {
+								onDone(finalMem, true, finalErr)
+							}
+						})
+					}()
+				} else {
+					t.counter = 0
+					t.messages = nil
+					t.running = false
+					t.mu.Unlock()
+				}
+			})
+		}()
+		return oldMemory, nil
+	}
+
+	t.mu.Unlock()
+
+	if onDone != nil {
+		onDone(oldMemory, false, nil)
+	}
 	return oldMemory, nil
 }
 
-func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage) (MemoryContent, error) {
+func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, newMessages []config.OpenAIMessage, onDone UpdateCallback) (MemoryContent, error) {
 	if len(newMessages) == 0 {
+		if onDone != nil {
+			onDone(oldMemory, true, nil)
+		}
 		return oldMemory, nil
 	}
 
@@ -149,13 +219,22 @@ func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, 
 		},
 	}
 
-	resp, err := u.client.Chat.Completions.New(ctx, request)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	resp, err := u.client.Chat.Completions.New(timeoutCtx, request)
 	if err != nil {
 		log.Printf("failed to update memory through llm: %v", err)
+		if onDone != nil {
+			onDone(oldMemory, true, err)
+		}
 		return oldMemory, err
 	}
 	if len(resp.Choices) == 0 {
 		log.Printf("no choices returned, resp: %s", resp.RawJSON())
+		if onDone != nil {
+			onDone(oldMemory, true, nil)
+		}
 		return oldMemory, nil
 	}
 
@@ -163,6 +242,10 @@ func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, 
 	newMemory := MemoryContent{}
 	newMemory.GlobalMemory = extractXMLTag(respContent, "global")
 	newMemory.WorkspaceMemory = extractXMLTag(respContent, "workspace")
+
+	if onDone != nil {
+		onDone(newMemory, true, nil)
+	}
 
 	return newMemory, nil
 }

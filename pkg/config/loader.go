@@ -145,8 +145,7 @@ func EnsureAwesomeConfigFile(path string) error {
 	if err := EnsureAwesomeDir(); err != nil {
 		return err
 	}
-	// 创建默认配置文件，useMemory 默认为 true，MemoryUpdateThreshold 默认为 5，ContextWindow 默认为 128K
-	defaultCfg := AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5, ContextWindow: DefaultContextWindow}
+	defaultCfg := AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 2, ContextWindow: DefaultContextWindow}
 	content, err := json.MarshalIndent(defaultCfg, "", "  ")
 	if err != nil {
 		return err
@@ -161,15 +160,12 @@ func LoadAwesomeConfig(path string) (AwesomeConfig, error) {
 		return AwesomeConfig{}, err
 	}
 	var cfg AwesomeConfig
-	// 如果解析失败，返回默认配置（useMemory 为 true，MemoryUpdateThreshold 为 5，ContextWindow 为 128K）
 	if err := json.Unmarshal(content, &cfg); err != nil {
-		return AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 5, ContextWindow: DefaultContextWindow}, nil
+		return AwesomeConfig{UseMemory: true, MemoryUpdateThreshold: 2, ContextWindow: DefaultContextWindow}, nil
 	}
-	// 如果 MemoryUpdateThreshold 未配置或为 0，使用默认值 5
 	if cfg.MemoryUpdateThreshold <= 0 {
-		cfg.MemoryUpdateThreshold = 5
+		cfg.MemoryUpdateThreshold = 2
 	}
-	// 如果 ContextWindow 未配置或为 0，使用默认值 128K
 	if cfg.ContextWindow <= 0 {
 		cfg.ContextWindow = DefaultContextWindow
 	}
