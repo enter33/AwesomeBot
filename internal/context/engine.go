@@ -120,7 +120,9 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 		}
 		go func() {
 			logging.Info("CommitTurn goroutine: starting memory.Update")
-			err := c.memory.Update(ctx, draft.NewMessages, func(newMemory memory.MemoryContent, notify bool, updateErr error) {
+			// 使用不受父 context 取消影响的 context
+			memCtx := context.WithoutCancel(ctx)
+			err := c.memory.Update(memCtx, draft.NewMessages, func(newMemory memory.MemoryContent, notify bool, updateErr error) {
 				logging.Info("CommitTurn callback: notify=%v, updateErr=%v", notify, updateErr)
 				if notify {
 					if c.onMemoryEvent != nil {
