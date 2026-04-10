@@ -134,7 +134,9 @@ func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryCon
 		currentMemory := oldMemory
 
 		go func() {
+			logging.Info("ThrottledMemoryUpdater: 开始调用 updater.Update")
 			t.updater.Update(ctx, currentMemory, messagesToUpdate, func(newMem MemoryContent, shouldNotify bool, err error) {
+				logging.Info("ThrottledMemoryUpdater: 收到 callback，shouldNotify=%v, err=%v", shouldNotify, err)
 				if onDone != nil {
 					onDone(newMem, shouldNotify, err)
 				}
@@ -227,10 +229,12 @@ func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, 
 	if err != nil {
 		log.Printf("failed to update memory through llm: %v", err)
 		if onDone != nil {
+			logging.Info("LLM 调用失败，调用 callback，err=%v", err)
 			onDone(oldMemory, true, err)
 		}
 		return oldMemory, err
 	}
+	logging.Info("记忆 LLM 返回成功，resp.Choices 数量: %d", len(resp.Choices))
 	if len(resp.Choices) == 0 {
 		log.Printf("no choices returned, resp: %s", resp.RawJSON())
 		if onDone != nil {
@@ -244,7 +248,10 @@ func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, 
 	newMemory.GlobalMemory = extractXMLTag(respContent, "global")
 	newMemory.WorkspaceMemory = extractXMLTag(respContent, "workspace")
 
+	logging.Info("提取的 global memory: %s", newMemory.GlobalMemory)
+	logging.Info("提取的 workspace memory: %s", newMemory.WorkspaceMemory)
 	if onDone != nil {
+		logging.Info("调用 callback，shouldNotify=true")
 		onDone(newMemory, true, nil)
 	}
 
