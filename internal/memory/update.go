@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -133,9 +134,9 @@ func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryCon
 		currentMemory := oldMemory
 
 		go func() {
-			t.updater.Update(ctx, currentMemory, messagesToUpdate, func(newMem MemoryContent, _ bool, err error) {
+			t.updater.Update(ctx, currentMemory, messagesToUpdate, func(newMem MemoryContent, shouldNotify bool, err error) {
 				if onDone != nil {
-					onDone(newMem, true, err)
+					onDone(newMem, shouldNotify, err)
 				}
 
 				t.mu.Lock()
@@ -154,12 +155,12 @@ func (t *ThrottledMemoryUpdater) Update(ctx context.Context, oldMemory MemoryCon
 						t.messages = nil
 						t.mu.Unlock()
 
-						t.updater.Update(ctx, nextMemory, nextMessages, func(finalMem MemoryContent, _ bool, finalErr error) {
+						t.updater.Update(ctx, nextMemory, nextMessages, func(finalMem MemoryContent, shouldNotify bool, finalErr error) {
 							t.mu.Lock()
 							t.running = false
 							t.mu.Unlock()
 							if onDone != nil {
-								onDone(finalMem, true, finalErr)
+								onDone(finalMem, shouldNotify, finalErr)
 							}
 						})
 					}()
@@ -233,9 +234,9 @@ func (u *LLMMemoryUpdater) Update(ctx context.Context, oldMemory MemoryContent, 
 	if len(resp.Choices) == 0 {
 		log.Printf("no choices returned, resp: %s", resp.RawJSON())
 		if onDone != nil {
-			onDone(oldMemory, true, nil)
+			onDone(oldMemory, true, fmt.Errorf("no choices returned from LLM"))
 		}
-		return oldMemory, nil
+		return oldMemory, fmt.Errorf("no choices returned from LLM")
 	}
 
 	respContent := resp.Choices[0].Message.Content
