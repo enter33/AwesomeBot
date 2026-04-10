@@ -130,12 +130,17 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 		}
 	})
 	a.contextEngine.SetMemoryEventHook(func(running bool, err error) {
-		viewCh <- MessageVO{
+		// 使用 non-blocking send 避免 channel 关闭后 panic
+		select {
+		case viewCh <- MessageVO{
 			Type: MessageTypeMemory,
 			Memory: &MemoryVO{
 				Running: running,
 				Error:   err,
 			},
+		}:
+		default:
+			logging.Warn("memory event dropped: viewCh blocked or closed")
 		}
 	})
 	defer a.contextEngine.SetPolicyEventHook(nil)
