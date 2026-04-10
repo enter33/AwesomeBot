@@ -9,6 +9,7 @@ import (
 
 	"github.com/openai/openai-go/v3"
 
+	"github.com/enter33/AwesomeBot/internal/logging"
 	"github.com/enter33/AwesomeBot/internal/memory"
 	"github.com/enter33/AwesomeBot/internal/skill"
 	"github.com/enter33/AwesomeBot/internal/storage"
@@ -111,13 +112,16 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 
 	if c.memory != nil {
 		shouldNotify := c.memory.ShouldNotify()
+		logging.Info("CommitTurn: shouldNotify=%v, running before", shouldNotify)
 		if shouldNotify {
 			if c.onMemoryEvent != nil {
 				c.onMemoryEvent(true, nil)
 			}
 		}
 		go func() {
+			logging.Info("CommitTurn goroutine: starting memory.Update")
 			err := c.memory.Update(ctx, draft.NewMessages, func(newMemory memory.MemoryContent, notify bool, updateErr error) {
+				logging.Info("CommitTurn callback: notify=%v, updateErr=%v", notify, updateErr)
 				if notify {
 					if c.onMemoryEvent != nil {
 						c.onMemoryEvent(false, updateErr)
@@ -130,6 +134,7 @@ func (c *Engine) CommitTurn(ctx context.Context, draft TurnDraft, usage Usage, s
 			if err != nil {
 				log.Printf("failed to start async memory update: %v", err)
 			}
+			logging.Info("CommitTurn goroutine: memory.Update returned, err=%v", err)
 		}()
 	}
 
