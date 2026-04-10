@@ -34,6 +34,7 @@ type Agent struct {
 	nativeTools     map[tool.AgentTool]tool.Tool
 	mcpClients      map[string]*mcp.Client
 	getSchemaTool   *mcp.GetSchemaTool
+	memoryCh        chan MessageVO // 持久化的 memory event channel
 }
 
 // NewAgent 创建 Agent 实例
@@ -55,6 +56,7 @@ func NewAgent(
 		contextEngine:    contextEngine,
 		nativeTools:      make(map[tool.AgentTool]tool.Tool),
 		mcpClients:       make(map[string]*mcp.Client),
+		memoryCh:         make(chan MessageVO, 10),
 	}
 
 	a.contextEngine.Init(systemPrompt, ctxengine.TokenBudget{ContextWindow: contextWindow})
@@ -68,6 +70,11 @@ func NewAgent(
 	a.getSchemaTool = mcp.NewGetSchemaTool(mcpClients)
 
 	return &a
+}
+
+// MemoryCh returns the persistent channel for memory events
+func (a *Agent) MemoryCh() <-chan MessageVO {
+	return a.memoryCh
 }
 
 func (a *Agent) findTool(toolName string) (tool.Tool, bool) {
@@ -130,9 +137,9 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 		}
 	})
 	a.contextEngine.SetMemoryEventHook(func(running bool, err error) {
-		// 使用 non-blocking send 避免 channel 关闭后 panic
+		// 使用持久化的 memoryCh 发送 memory event
 		select {
-		case viewCh <- MessageVO{
+		case a.memoryCh <- MessageVO{
 			Type: MessageTypeMemory,
 			Memory: &MemoryVO{
 				Running: running,
@@ -140,7 +147,7 @@ func (a *Agent) RunStreaming(ctx context.Context, query string, viewCh chan Mess
 			},
 		}:
 		default:
-			logging.Warn("memory event dropped: viewCh blocked or closed")
+			logging.Warn("memory event dropped: memoryCh blocked or closed")
 		}
 	})
 	defer a.contextEngine.SetPolicyEventHook(nil)

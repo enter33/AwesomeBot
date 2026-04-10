@@ -660,6 +660,16 @@ func (m *TuiViewModel) handleStreamDone(msg streamDoneMsg) (tea.Model, tea.Cmd) 
 func (m *TuiViewModel) startSubagentListener() tea.Cmd {
 	return func() tea.Msg {
 		for {
+			// 检查 memory channel（持久化的，不受 turn 影响）
+			select {
+			case msg, ok := <-m.agent.MemoryCh():
+				if !ok {
+					continue
+				}
+				return streamMsg{event: msg}
+			default:
+			}
+
 			if m.subagentManager == nil {
 				time.Sleep(100 * time.Millisecond)
 				continue
