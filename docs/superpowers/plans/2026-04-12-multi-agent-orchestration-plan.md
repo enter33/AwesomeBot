@@ -398,6 +398,33 @@ import (
 // ErrMaxRetriesExceeded 超过最大重试次数
 var ErrMaxRetriesExceeded = &OrchestratorError{"max retries exceeded"}
 
+// OrchestratorError 编排器错误
+type OrchestratorError struct {
+	msg string
+}
+
+func (e *OrchestratorError) Error() string {
+	return e.msg
+}
+
+// handleError 处理阶段执行错误
+func (o *Orchestrator) handleError(phase OrchestrationState, err error) {
+	o.errorLogger.Log(ErrorLog{
+		Phase:       string(phase),
+		ErrorType:   classifyError(err),
+		ErrorDetail: err.Error(),
+		Timestamp:   time.Now(),
+		RetryCount:  o.totalRetry,
+	})
+}
+
+func classifyError(err error) ErrorType {
+	switch err.(type) {
+	default:
+		return ErrorTypeUnknown
+	}
+}
+
 // Orchestrator 主编排器
 type Orchestrator struct {
 	state        OrchestrationState
@@ -949,8 +976,9 @@ func TestScoreCalculator(t *testing.T) {
 		{Name: "维度2", Weight: 0.5},
 	}
 	scores := []float64{80, 60}
+	threshold := 70.0
 
-	result := calc.Calculate(dimensions, scores)
+	result := calc.CalculateWithThreshold(dimensions, scores, threshold)
 
 	expected := 70.0
 	if result.TotalScore != expected {
@@ -958,7 +986,13 @@ func TestScoreCalculator(t *testing.T) {
 	}
 
 	if !result.Passed {
-		t.Error("expected passed=true")
+		t.Error("expected passed=true when score >= threshold")
+	}
+
+	// 测试不通过情况
+	result2 := calc.CalculateWithThreshold(dimensions, scores, 80.0)
+	if result2.Passed {
+		t.Error("expected passed=false when score < threshold")
 	}
 }
 
