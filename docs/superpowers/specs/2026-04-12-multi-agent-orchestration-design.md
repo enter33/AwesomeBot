@@ -120,9 +120,7 @@ pending → planning → plan_reviewing → planning (打回重做)
 | code_reviewing | CodeReviewer 正在审查代码 |
 | final_review | TaskReviewer 进行最终验收 |
 | done | 任务完成 |
-| failed | 任务失败（超过重试上限或不可恢复错误） |
-
-**失败入口**：任何阶段超过重试上限（见 7.1）→ 进入 `failed` 状态
+| paused | 任务暂停（达到重试上限，需人工介入） |
 
 ## 7. 保护机制
 
@@ -134,21 +132,38 @@ pending → planning → plan_reviewing → planning (打回重做)
 | Code 阶段 | 5 次 |
 | 全局 | 10 次（累计所有阶段） |
 
-### 7.2 超时配置
+### 7.2 异常处理机制
 
-| Agent | 超时时间 |
-|-------|---------|
-| PlanAgent | 60 秒 |
-| CodingAgent | 300 秒 |
-| PlanReviewer | 30 秒 |
-| CodeReviewer | 30 秒 |
-| TaskReviewer | 30 秒 |
+Agent 执行过程中遇到错误时，采用**学习式重试**：
 
-### 7.3 失败处理
+| 步骤 | 说明 |
+|------|------|
+| 1. 记录异常 | 将错误信息、发生阶段、上下文快照记录到错误日志 |
+| 2. 分析原因 | 简单分析错误类型（工具失败、LLM 响应异常、上下文超限等） |
+| 3. 生成备忘 | 将分析结论作为"经验"存入记忆，下次同类任务参考 |
+| 4. 恢复状态 | 回滚到该阶段开始前的状态 |
+| 5. 重试执行 | 携带经验备忘，重新执行该阶段 |
 
-- 单阶段重试超限：终止任务，标记为 failed
-- 全局重试超限：终止任务，输出当前状态
-- Agent 执行异常：捕获错误，生成错误报告，进入重试或终止
+**异常日志格式**：
+```json
+{
+  "phase": "coding",
+  "error_type": "tool_execution_failed",
+  "error_detail": "bash tool timeout after 120s",
+  "context_snapshot": "...",
+  "learned_lesson": "bash命令执行时间过长，下次应先分析复杂度再执行"
+}
+```
+
+### 7.3 重试上限
+
+| 阶段 | 最大重试次数 |
+|------|-------------|
+| Plan 阶段 | 3 次 |
+| Code 阶段 | 5 次 |
+
+- 达到上限后，标记该任务需要人工介入
+- 不中断流程，用户可选择继续或放弃
 
 ## 8. 用户交互模式
 
@@ -232,15 +247,9 @@ pending → planning → plan_reviewing → planning (打回重做)
   "multi_agent": {
     "enabled": true,
     "complexity_threshold": 2,
-    "timeouts": {
-      "plan_agent": 60,
-      "coding_agent": 300,
-      "reviewer": 30
-    },
     "retry_limits": {
       "plan_phase": 3,
-      "code_phase": 5,
-      "global": 10
+      "code_phase": 5
     },
     "thresholds": {
       "plan_reviewer": 70,
@@ -282,9 +291,10 @@ internal/
 ## 12. 风险与限制
 
 1. **Agent 能力依赖**：系统效果依赖各 Agent 的 prompt 质量和 LLM 能力
-2. **无限循环风险**：虽有重试上限，但可能达到上限仍未收敛
+2. **学习有效性**：错误经验需要正确归因，否则可能产生误导
 3. **上下文丢失**：增量上下文可能丢失跨阶段的有用信息
 4. **评分主观性**：多维评分存在主观性，可能影响判断一致性
+5. **重试风暴**：同类错误反复发生时，重试可能无效，应人工介入
 
 ## 13. 未来扩展
 
