@@ -120,7 +120,9 @@ pending → planning → plan_reviewing → planning (打回重做)
 | code_reviewing | CodeReviewer 正在审查代码 |
 | final_review | TaskReviewer 进行最终验收 |
 | done | 任务完成 |
-| failed | 任务失败（超限或不可恢复错误） |
+| failed | 任务失败（超过重试上限或不可恢复错误） |
+
+**失败入口**：任何阶段超过重试上限（见 7.1）→ 进入 `failed` 状态
 
 ## 7. 保护机制
 
@@ -245,7 +247,7 @@ pending → planning → plan_reviewing → planning (打回重做)
       "code_reviewer": 70,
       "task_reviewer": 70
     },
-    "interaction_mode": "auto"
+    "interaction_mode": "auto"  // "auto"=简单模式(自动完成), "manual"=复杂模式(实时流式)
   }
 }
 ```
