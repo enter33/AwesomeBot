@@ -197,8 +197,9 @@ type MultiAgentConfig struct {
 
 // RetryLimitsConfig 重试限制配置
 type RetryLimitsConfig struct {
-	PlanPhase int `json:"plan_phase"` // 默认 3
-	CodePhase int `json:"code_phase"` // 默认 5
+	PlanPhase     int `json:"plan_phase"`     // 默认 3
+	CodePhase     int `json:"code_phase"`     // 默认 5
+	MaxTotalRetries int `json:"max_total_retries"` // 全局重试上限，默认 10
 }
 
 // ThresholdsConfig 评分阈值配置
@@ -225,6 +226,9 @@ if cfg.MultiAgent.RetryLimits.PlanPhase == 0 {
 }
 if cfg.MultiAgent.RetryLimits.CodePhase == 0 {
 	cfg.MultiAgent.RetryLimits.CodePhase = 5
+}
+if cfg.MultiAgent.RetryLimits.MaxTotalRetries == 0 {
+	cfg.MultiAgent.RetryLimits.MaxTotalRetries = 10 // 全局重试上限
 }
 // ... 类似处理 thresholds
 ```
@@ -282,8 +286,8 @@ func NewScoreCalculator() *ScoreCalculator {
 	return &ScoreCalculator{}
 }
 
-// Calculate 计算总分
-func (s *ScoreCalculator) Calculate(dimensions []DimensionConfig, scores []float64) *ReviewScore {
+// CalculateWithThreshold 计算总分，使用指定的阈值
+func (s *ScoreCalculator) CalculateWithThreshold(dimensions []DimensionConfig, scores []float64, threshold float64) *ReviewScore {
 	if len(dimensions) != len(scores) {
 		return &ReviewScore{TotalScore: 0, Passed: false}
 	}
@@ -303,7 +307,7 @@ func (s *ScoreCalculator) Calculate(dimensions []DimensionConfig, scores []float
 	return &ReviewScore{
 		TotalScore: total,
 		Dimensions: dimScores,
-		Passed:     total >= 70,
+		Passed:     total >= threshold, // 使用配置的阈值
 	}
 }
 ```
@@ -440,10 +444,17 @@ func (o *Orchestrator) Execute(ctx context.Context, request string) error {
 	o.codeResult = ""
 	o.planRetry = 0
 	o.codeRetry = 0
+	o.totalRetry = 0
 	o.mu.Unlock()
 
 	// 主循环：会在 planning/coding/final_review 之间流转
 	for {
+		// 检查全局重试上限
+		if o.totalRetry >= o.config.RetryLimits.MaxTotalRetries {
+			o.setState(StatePaused)
+			return ErrMaxRetriesExceeded
+		}
+
 		switch o.getState() {
 		case StatePlanning:
 			plan, err := o.runPlanningPhase(ctx)
@@ -750,11 +761,17 @@ func (o *Orchestrator) parseReviewScore(output string, dimensions []DimensionCon
 	// 从输出中提取 "总分: X/100"
 	re := regexp.MustCompile(`总分:\s*(\d+)`)
 	matches := re.FindStringSubmatch(output)
-	if len(matches) < 2 {
-		return &ReviewScore{TotalScore: 50, Passed: false}, nil
+
+	var score float64
+	if len(matches) >= 2 {
+		score, _ = strconv.ParseFloat(matches[1], 64)
+	} else {
+		// 无法解析时，请求用户确认或使用保守默认值
+		// 这里使用维度平均分作为fallback
+		score = 50
+		logging.Warn("无法从Reviewer输出解析评分，使用默认值50")
 	}
 
-	score, _ := strconv.ParseFloat(matches[1], 64)
 	return &ReviewScore{
 		TotalScore: score,
 		Dimensions: nil,
@@ -765,8 +782,16 @@ func (o *Orchestrator) parseReviewScore(output string, dimensions []DimensionCon
 
 func extractComments(output string) string {
 	// 提取质疑点或评论
-	re := regexp.MustCompile(`(?s)质疑点.*?改进建议`)
-	return re.FindString(output)
+	re := regexp.MustCompile(`(?s)(质疑点|问题列表|改进建议|通过与否).*`)
+	if re == nil {
+		return ""
+	}
+	match := re.FindString(output)
+	// 截取前500字符避免过长
+	if len(match) > 500 {
+		return match[:500] + "..."
+	}
+	return match
 }
 ```
 
