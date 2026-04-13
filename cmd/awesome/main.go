@@ -18,6 +18,7 @@ import (
 	"github.com/enter33/AwesomeBot/internal/logging"
 	"github.com/enter33/AwesomeBot/internal/mcp"
 	"github.com/enter33/AwesomeBot/internal/memory"
+	"github.com/enter33/AwesomeBot/internal/orchestrator"
 	"github.com/enter33/AwesomeBot/internal/storage"
 	"github.com/enter33/AwesomeBot/internal/subagent"
 	"github.com/enter33/AwesomeBot/internal/tool"
@@ -230,8 +231,15 @@ func main() {
 		os.RemoveAll(instanceOffloadDir)
 	}()
 
+	// 创建 Orchestrator
+	orch := orchestrator.NewOrchestrator(
+		awesomeConfig.MultiAgent,
+		subagentManager,
+	)
+
 	// 创建 TUI
 	tuiModel := tui.NewModelWithSubagentManager(codingAgent, subagentManager, llmConfig.Model, version)
+	tuiModel.SetOrchestrator(orch)
 
 	// 运行 TUI
 	p := tea.NewProgram(tuiModel)

@@ -124,11 +124,35 @@ func GetWorkspaceDir() string {
 	return dir
 }
 
+// MultiAgentConfig 多Agent配置
+type MultiAgentConfig struct {
+	Enabled             bool              `json:"enabled"`
+	ComplexityThreshold int               `json:"complexity_threshold"`
+	RetryLimits         RetryLimitsConfig `json:"retry_limits"`
+	Thresholds          ThresholdsConfig  `json:"thresholds"`
+	InteractionMode     string            `json:"interaction_mode"` // "auto" or "manual"
+}
+
+// RetryLimitsConfig 重试限制配置
+type RetryLimitsConfig struct {
+	PlanPhase       int `json:"plan_phase"`        // 默认 3
+	CodePhase       int `json:"code_phase"`        // 默认 5
+	MaxTotalRetries int `json:"max_total_retries"` // 全局重试上限，默认 10
+}
+
+// ThresholdsConfig 评分阈值配置
+type ThresholdsConfig struct {
+	PlanReviewer float64 `json:"plan_reviewer"` // 默认 70
+	CodeReviewer float64 `json:"code_reviewer"` // 默认 70
+	TaskReviewer float64 `json:"task_reviewer"` // 默认 70
+}
+
 // AwesomeConfig awesomebot 全局配置
 type AwesomeConfig struct {
-	UseMemory             bool `json:"use_memory"`
-	MemoryUpdateThreshold int  `json:"memory_update_threshold"` // 每N轮更新一次，默认5
-	ContextWindow         int  `json:"context_window"`         // 上下文窗口大小，默认 128K
+	UseMemory             bool             `json:"use_memory"`
+	MemoryUpdateThreshold int              `json:"memory_update_threshold"` // 每N轮更新一次，默认5
+	ContextWindow         int              `json:"context_window"`          // 上下文窗口大小，默认 128K
+	MultiAgent            MultiAgentConfig `json:"multi_agent"`
 }
 
 // GetAwesomeConfigPath 获取 awesome 配置文件的路径
@@ -168,6 +192,30 @@ func LoadAwesomeConfig(path string) (AwesomeConfig, error) {
 	}
 	if cfg.ContextWindow <= 0 {
 		cfg.ContextWindow = DefaultContextWindow
+	}
+	if cfg.MultiAgent.RetryLimits.PlanPhase == 0 {
+		cfg.MultiAgent.RetryLimits.PlanPhase = 3
+	}
+	if cfg.MultiAgent.RetryLimits.CodePhase == 0 {
+		cfg.MultiAgent.RetryLimits.CodePhase = 5
+	}
+	if cfg.MultiAgent.RetryLimits.MaxTotalRetries == 0 {
+		cfg.MultiAgent.RetryLimits.MaxTotalRetries = 10
+	}
+	if cfg.MultiAgent.Thresholds.PlanReviewer == 0 {
+		cfg.MultiAgent.Thresholds.PlanReviewer = 70
+	}
+	if cfg.MultiAgent.Thresholds.CodeReviewer == 0 {
+		cfg.MultiAgent.Thresholds.CodeReviewer = 70
+	}
+	if cfg.MultiAgent.Thresholds.TaskReviewer == 0 {
+		cfg.MultiAgent.Thresholds.TaskReviewer = 70
+	}
+	if cfg.MultiAgent.ComplexityThreshold == 0 {
+		cfg.MultiAgent.ComplexityThreshold = 2
+	}
+	if cfg.MultiAgent.InteractionMode == "" {
+		cfg.MultiAgent.InteractionMode = "auto"
 	}
 	return cfg, nil
 }

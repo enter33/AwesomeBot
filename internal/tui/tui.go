@@ -12,6 +12,7 @@ import (
 
 	"github.com/enter33/AwesomeBot/internal/agent"
 	"github.com/enter33/AwesomeBot/internal/logging"
+	"github.com/enter33/AwesomeBot/internal/orchestrator"
 	"github.com/enter33/AwesomeBot/internal/subagent"
 )
 
@@ -41,6 +42,16 @@ type subagentStreamMsg struct {
 	event        agent.MessageVO
 }
 
+// orchestratorUpdateMsg 编排器状态更新消息
+type orchestratorUpdateMsg struct {
+	update orchestrator.OrchestratorUpdate
+}
+
+// orchestratorDoneMsg 编排器完成消息
+type orchestratorDoneMsg struct {
+	err error
+}
+
 type runState int
 
 const (
@@ -49,6 +60,7 @@ const (
 	stateAborting
 	stateAwaitingConfirmation
 	stateSubagentRunning
+	stateOrchestrating
 )
 
 type activeStream struct {
@@ -119,6 +131,12 @@ type TuiViewModel struct {
 	subagentManager *subagent.Manager
 	subagentOutputs map[string]*subagentOutput // 子代理输出缓冲区
 
+	// Orchestrator 相关
+	orchestrator       *orchestrator.Orchestrator
+	orchestratorState  orchestrator.OrchestrationState
+	orchestratorScores map[orchestrator.OrchestrationState]*orchestrator.ReviewScore
+	orchestratorUpdateCh <-chan orchestrator.OrchestratorUpdate
+
 	// 日志自动清理相关
 	maxLogEntries int // 最大日志条目数，0 表示不限制
 
@@ -171,6 +189,12 @@ func NewModelWithSubagentManager(agent *agent.Agent, subagentMgr *subagent.Manag
 func (m *TuiViewModel) Init() tea.Cmd {
 	// 启动子代理消息监听
 	return m.startSubagentListener()
+}
+
+// SetOrchestrator 设置编排器
+func (m *TuiViewModel) SetOrchestrator(orch *orchestrator.Orchestrator) {
+	m.orchestrator = orch
+	m.orchestratorScores = make(map[orchestrator.OrchestrationState]*orchestrator.ReviewScore)
 }
 
 func waitStreamEvent(ch <-chan agent.MessageVO) tea.Cmd {
@@ -233,6 +257,10 @@ func (m *TuiViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSubagentStreamMsg(msg)
 	case subagentCompletionMsg:
 		return m.handleSubagentCompletion(msg)
+	case orchestratorUpdateMsg:
+		return m.handleOrchestratorUpdate(msg)
+	case orchestratorDoneMsg:
+		return m.handleOrchestratorDone(msg)
 	}
 	return m, nil
 }
@@ -243,6 +271,17 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			m.stopAllSubagents()
 			m.state = stateIdle
+			m.refreshLogsViewportContent()
+		}
+		return m, nil
+	}
+
+	// 编排运行时不允许输入，只允许 ctrl+c 或 esc 终止
+	if m.state == stateOrchestrating {
+		if msg.String() == "ctrl+c" || msg.String() == "esc" {
+			m.stopAllSubagents()
+			m.state = stateIdle
+			m.logs = append(m.logs, NewNotice("用户取消了编排任务。"))
 			m.refreshLogsViewportContent()
 		}
 		return m, nil
@@ -490,6 +529,16 @@ func (m *TuiViewModel) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// 识别 /plan 命令或自动触发编排模式
+	if strings.HasPrefix(query, "/plan ") {
+		actualQuery := strings.TrimPrefix(query, "/plan ")
+		return m.startOrchestration(actualQuery)
+	}
+
+	if m.orchestrator != nil && m.orchestrator.ShouldOrchestrate(query) {
+		return m.startOrchestration(query)
+	}
+
 	return m.startNewTurn(query)
 }
 
@@ -723,7 +772,7 @@ func (m *TuiViewModel) startSubagentListener() tea.Cmd {
 			}
 
 			// 更新子代理运行状态
-			if hasRunning && m.state != stateSubagentRunning {
+			if hasRunning && m.state != stateSubagentRunning && m.state != stateOrchestrating {
 				m.state = stateSubagentRunning
 			} else if !hasRunning && m.state == stateSubagentRunning {
 				// 只有当主Agent loop也结束时（m.active == nil），才切换到 stateIdle
@@ -898,6 +947,65 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+func (m *TuiViewModel) startOrchestration(query string) (tea.Model, tea.Cmd) {
+	m.notice = ""
+	m.logs = append(m.logs, NewContent(query))
+	m.logs = append(m.logs, NewNotice("进入多 Agent 编排模式..."))
+	m.refreshLogsViewportContent()
+
+	m.state = stateOrchestrating
+	m.orchestratorState = orchestrator.StatePlanning
+	m.orchestratorScores = make(map[orchestrator.OrchestrationState]*orchestrator.ReviewScore)
+
+	ctx := context.Background()
+	m.orchestratorUpdateCh = m.orchestrator.ExecuteAsync(ctx, query)
+
+	return m, tea.Batch(
+		m.startSubagentListener(),
+		waitOrchestratorUpdate(m.orchestratorUpdateCh),
+	)
+}
+
+func waitOrchestratorUpdate(ch <-chan orchestrator.OrchestratorUpdate) tea.Cmd {
+	return func() tea.Msg {
+		update, ok := <-ch
+		if !ok {
+			return orchestratorDoneMsg{}
+		}
+		if update.IsFinal {
+			return orchestratorDoneMsg{err: update.Error}
+		}
+		return orchestratorUpdateMsg{update: update}
+	}
+}
+
+func (m *TuiViewModel) handleOrchestratorUpdate(msg orchestratorUpdateMsg) (tea.Model, tea.Cmd) {
+	update := msg.update
+	m.orchestratorState = update.State
+	if update.Score != nil {
+		m.orchestratorScores[update.State] = update.Score
+	}
+	if update.PhaseLog != "" {
+		m.logs = append(m.logs, NewNotice(fmt.Sprintf("[编排] %s: %s", update.State, update.PhaseLog)))
+	}
+	m.refreshLogsViewportContent()
+
+	return m, waitOrchestratorUpdate(m.orchestratorUpdateCh)
+}
+
+func (m *TuiViewModel) handleOrchestratorDone(msg orchestratorDoneMsg) (tea.Model, tea.Cmd) {
+	m.state = stateIdle
+	if msg.err != nil {
+		m.logs = append(m.logs, NewError(fmt.Sprintf("编排任务失败: %v", msg.err)))
+	} else {
+		m.logs = append(m.logs, NewNotice("编排任务已完成。"))
+	}
+	m.logs = append(m.logs, NewBorder())
+	m.refreshLogsViewportContent()
+	m.cleanupLogs()
+	return m, nil
+}
+
 func (m *TuiViewModel) startNewTurn(query string) (tea.Model, tea.Cmd) {
 	m.notice = ""
 	turnStart := len(m.logs)
@@ -1059,6 +1167,9 @@ func (m *TuiViewModel) logsFooterHeight() int {
 	if m.state != stateIdle {
 		h++
 	}
+	if m.state == stateOrchestrating {
+		h++ // 额外一行显示编排状态条
+	}
 	if m.notice != "" {
 		h++
 	}
@@ -1204,7 +1315,12 @@ func (m *TuiViewModel) View() tea.View {
 	}
 
 	b.WriteString("\n")
-	if m.state == stateSubagentRunning {
+	if m.state == stateOrchestrating {
+		b.WriteString(RenderOrchestratorState(m.orchestratorState, m.orchestratorScores))
+		b.WriteString("\n")
+		b.WriteString(footerStyle.Render("编排运行中，Ctrl+C / Esc 取消，输入暂不可用。"))
+		b.WriteString("\n")
+	} else if m.state == stateSubagentRunning {
 		b.WriteString(footerStyle.Render("子代理运行中，Ctrl+C 终止，输入暂不可用。"))
 		b.WriteString("\n")
 	} else if m.state != stateIdle && m.state != stateAwaitingConfirmation {
@@ -1214,7 +1330,7 @@ func (m *TuiViewModel) View() tea.View {
 	if m.state == stateAwaitingConfirmation {
 		b.WriteString(footerStyle.Render("↑↓ 选择  Enter 确认  Esc 拒绝"))
 		b.WriteString("\n")
-	} else if m.state != stateSubagentRunning {
+	} else if m.state != stateSubagentRunning && m.state != stateOrchestrating {
 		// 渲染带光标的输入行
 		runes := []rune(m.input)
 		if m.cursorPos > len(runes) {
@@ -1229,7 +1345,7 @@ func (m *TuiViewModel) View() tea.View {
 	}
 	b.WriteString(footerStyle.Render("快捷键: Ctrl+C 退出，Esc 取消 | ↑↓ 历史 | Ctrl+U 清行"))
 	b.WriteString("\n")
-	b.WriteString(footerStyle.Render("命令: /clear 清空会话"))
+	b.WriteString(footerStyle.Render("命令: /clear 清空会话 | /plan <请求> 进入编排模式"))
 	if m.notice != "" {
 		b.WriteString("\n")
 		b.WriteString(noticeStyle.Render(m.notice))
