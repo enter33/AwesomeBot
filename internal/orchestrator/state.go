@@ -41,10 +41,12 @@ type DimensionScore struct {
 
 // OrchestratorUpdate 编排器状态更新（发送给 TUI）
 type OrchestratorUpdate struct {
-	State      OrchestrationState
-	Score      *ReviewScore
-	Message    string
-	PhaseLog   string
-	IsFinal    bool
-	Error      error
+	State          OrchestrationState
+	Score          *ReviewScore
+	Message        string
+	PhaseLog       string
+	IsFinal        bool
+	Error          error
+	NeedsUserInput bool
+	Question       string
 }

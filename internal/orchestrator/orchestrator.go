@@ -57,6 +57,9 @@ type Orchestrator struct {
 	codeResult             string
 	lastPlanReviewComments string
 	lastCodeReviewComments string
+
+	userInputCh       chan string
+	pendingUserInput  bool
 }
 
 // NewOrchestrator 创建编排器
@@ -73,6 +76,7 @@ func NewOrchestrator(
 		scoreCalc:    NewScoreCalculator(),
 		promptLoader: orchestratorPrompt.NewLoader(promptPath),
 		complexity:   NewComplexityDetector(cfg.ComplexityThreshold),
+		userInputCh:  make(chan string, 1),
 	}
 }
 
@@ -93,6 +97,58 @@ func (o *Orchestrator) setState(state OrchestrationState) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.state = state
+}
+
+// SubmitUserInput 提交用户输入（由 TUI 调用）
+func (o *Orchestrator) SubmitUserInput(input string) bool {
+	o.mu.Lock()
+	pending := o.pendingUserInput
+	o.mu.Unlock()
+	if !pending {
+		return false
+	}
+	select {
+	case o.userInputCh <- input:
+		o.setPendingInput(false)
+		return true
+	default:
+		return false
+	}
+}
+
+// IsPendingInput 是否正在等待用户输入
+func (o *Orchestrator) IsPendingInput() bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.pendingUserInput
+}
+
+func (o *Orchestrator) setPendingInput(v bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.pendingUserInput = v
+}
+
+func (o *Orchestrator) waitForUserInput(ctx context.Context, updateCh chan<- OrchestratorUpdate, question string) (string, error) {
+	o.setPendingInput(true)
+	defer o.setPendingInput(false)
+
+	select {
+	case updateCh <- OrchestratorUpdate{
+		State:          StatePaused,
+		NeedsUserInput: true,
+		Question:       question,
+	}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
+	select {
+	case resp := <-o.userInputCh:
+		return resp, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // ShouldOrchestrate 根据配置和复杂度自动判断是否启用编排
@@ -172,6 +228,13 @@ func (o *Orchestrator) executeWithUpdates(ctx context.Context, request string, u
 	}
 
 	for {
+		select {
+		case <-ctx.Done():
+			o.setState(StatePaused)
+			return ctx.Err()
+		default:
+		}
+
 		// 检查全局重试上限
 		if o.totalRetry >= o.config.RetryLimits.MaxTotalRetries {
 			o.setState(StatePaused)
@@ -180,8 +243,11 @@ func (o *Orchestrator) executeWithUpdates(ctx context.Context, request string, u
 
 		switch o.getState() {
 		case StatePlanning:
-			plan, err := o.runPlanningPhase(ctx)
+			plan, err := o.runPlanningPhase(ctx, updateCh)
 			if err != nil {
+				if isContextErr(err) {
+					return err
+				}
 				if o.planRetry >= o.config.RetryLimits.PlanPhase {
 					o.setState(StatePaused)
 					return ErrMaxRetriesExceeded
@@ -190,6 +256,8 @@ func (o *Orchestrator) executeWithUpdates(ctx context.Context, request string, u
 				msg := fmt.Sprintf("计划阶段失败，准备重试 (%d/%d)", o.planRetry, o.config.RetryLimits.PlanPhase)
 				if rerr, ok := err.(*ReviewNotPassedError); ok {
 					msg = fmt.Sprintf("计划审查未通过，准备重试 (%d/%d): %s", o.planRetry, o.config.RetryLimits.PlanPhase, rerr.Comments)
+				} else if err.Error() == "clarification needed" {
+					msg = fmt.Sprintf("已收到用户澄清，重新制定计划 (%d/%d)", o.planRetry, o.config.RetryLimits.PlanPhase)
 				} else {
 					msg = fmt.Sprintf("计划阶段执行错误，准备重试 (%d/%d): %v", o.planRetry, o.config.RetryLimits.PlanPhase, err)
 				}
@@ -202,6 +270,9 @@ func (o *Orchestrator) executeWithUpdates(ctx context.Context, request string, u
 		case StateCoding:
 			result, err := o.runCodingPhase(ctx, o.plan)
 			if err != nil {
+				if isContextErr(err) {
+					return err
+				}
 				if o.codeRetry >= o.config.RetryLimits.CodePhase {
 					o.setState(StatePaused)
 					return ErrMaxRetriesExceeded
@@ -222,6 +293,9 @@ func (o *Orchestrator) executeWithUpdates(ctx context.Context, request string, u
 		case StateFinalReview:
 			passed, score, err := o.runFinalPhase(ctx, o.codeResult)
 			if err != nil {
+				if isContextErr(err) {
+					return err
+				}
 				return err
 			}
 			if !passed {
@@ -259,12 +333,15 @@ func (o *Orchestrator) resetForReplan() {
 }
 
 // runPlanningPhase 执行计划阶段
-func (o *Orchestrator) runPlanningPhase(ctx context.Context) (string, error) {
+func (o *Orchestrator) runPlanningPhase(ctx context.Context, updateCh chan<- OrchestratorUpdate) (string, error) {
 	o.setState(StatePlanning)
 
 	// 1. 执行 PlanAgent
 	plan, err := o.executePlanAgent(ctx)
 	if err != nil {
+		if isContextErr(err) {
+			return "", err
+		}
 		o.handleError(StatePlanning, err)
 		o.planRetry++
 		if o.planRetry >= o.config.RetryLimits.PlanPhase {
@@ -274,10 +351,25 @@ func (o *Orchestrator) runPlanningPhase(ctx context.Context) (string, error) {
 		return "", err
 	}
 
+	// 检查是否需要用户澄清
+	if questions := extractClarification(plan); questions != "" {
+		answer, err := o.waitForUserInput(ctx, updateCh,
+			fmt.Sprintf("PlanAgent 在制定计划前需要澄清以下问题：\n%s\n\n请直接回复你的答案（可以简化回答）。", questions))
+		if err != nil {
+			return "", err
+		}
+		o.userRequest += "\n[用户澄清]\n" + strings.TrimSpace(answer)
+		o.planRetry++ // 不算严格失败，但消耗一次重试机会
+		return "", fmt.Errorf("clarification needed")
+	}
+
 	// 2. 执行 PlanReviewer
 	o.setState(StatePlanReviewing)
 	score, err := o.executePlanReviewer(ctx, plan)
 	if err != nil {
+		if isContextErr(err) {
+			return "", err
+		}
 		o.handleError(StatePlanReviewing, err)
 		o.planRetry++
 		if o.planRetry >= o.config.RetryLimits.PlanPhase {
@@ -290,8 +382,22 @@ func (o *Orchestrator) runPlanningPhase(ctx context.Context) (string, error) {
 
 	// 3. 检查是否通过
 	if score.Passed {
-		o.setState(StateCoding)
-		return plan, nil
+		// 请求用户确认计划
+		answer, err := o.waitForUserInput(ctx, updateCh,
+			fmt.Sprintf("计划已生成并通过初步审查（评分: %.0f），是否确认执行？\n\n计划内容:\n%s\n\n请输入 y/确认 执行，或输入修改意见重新制定计划。", score.TotalScore, plan))
+		if err != nil {
+			return "", err
+		}
+		ans := strings.ToLower(strings.TrimSpace(answer))
+		if ans == "y" || ans == "yes" || ans == "确认" || ans == "好" || ans == "ok" {
+			o.setState(StateCoding)
+			return plan, nil
+		}
+		// 用户有修改意见
+		o.userRequest += "\n[用户对计划的修改意见]\n" + answer
+		o.lastPlanReviewComments = "用户确认时提出修改意见: " + answer
+		o.planRetry++
+		return "", &ReviewNotPassedError{Comments: "用户要求修改计划: " + answer}
 	}
 
 	// 4. 打回重做
@@ -315,6 +421,9 @@ func (o *Orchestrator) runCodingPhase(ctx context.Context, plan string) (string,
 	// 1. 执行 CodingAgent
 	result, err := o.executeCodingAgent(ctx, plan)
 	if err != nil {
+		if isContextErr(err) {
+			return "", err
+		}
 		o.handleError(StateCoding, err)
 		o.codeRetry++
 		if o.codeRetry >= o.config.RetryLimits.CodePhase {
@@ -328,6 +437,9 @@ func (o *Orchestrator) runCodingPhase(ctx context.Context, plan string) (string,
 	o.setState(StateCodeReviewing)
 	score, err := o.executeCodeReviewer(ctx, result)
 	if err != nil {
+		if isContextErr(err) {
+			return "", err
+		}
 		o.handleError(StateCodeReviewing, err)
 		o.codeRetry++
 		if o.codeRetry >= o.config.RetryLimits.CodePhase {
@@ -595,4 +707,25 @@ func classifyError(err error) ErrorType {
 	default:
 		return ErrorTypeUnknown
 	}
+}
+
+func isContextErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err == context.Canceled || err == context.DeadlineExceeded || strings.Contains(err.Error(), "context canceled")
+}
+
+// extractClarification 从 PlanAgent 输出中提取需要澄清的问题
+func extractClarification(output string) string {
+	re := regexp.MustCompile(`(?is)CLARIFICATION_NEEDED[:：]?\s*(.*)`)
+	matches := re.FindStringSubmatch(output)
+	if len(matches) >= 2 {
+		q := strings.TrimSpace(matches[1])
+		if len(q) > 800 {
+			q = q[:800] + "..."
+		}
+		return q
+	}
+	return ""
 }

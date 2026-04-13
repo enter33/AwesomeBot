@@ -135,7 +135,10 @@ type TuiViewModel struct {
 	orchestrator       *orchestrator.Orchestrator
 	orchestratorState  orchestrator.OrchestrationState
 	orchestratorScores map[orchestrator.OrchestrationState]*orchestrator.ReviewScore
-	orchestratorUpdateCh <-chan orchestrator.OrchestratorUpdate
+	orchestratorUpdateCh     <-chan orchestrator.OrchestratorUpdate
+	orchestratorPendingInput bool
+	orchestratorQuestion     string
+	orchestratorCancel       context.CancelFunc
 
 	// 日志自动清理相关
 	maxLogEntries int // 最大日志条目数，0 表示不限制
@@ -280,11 +283,19 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.state == stateOrchestrating {
 		if msg.String() == "ctrl+c" || msg.String() == "esc" {
 			m.stopAllSubagents()
+			if m.orchestratorCancel != nil {
+				m.orchestratorCancel()
+			}
 			m.state = stateIdle
+			m.orchestratorPendingInput = false
 			m.logs = append(m.logs, NewNotice("用户取消了编排任务。"))
 			m.refreshLogsViewportContent()
+			return m, nil
 		}
-		return m, nil
+		if !m.orchestratorPendingInput {
+			return m, nil
+		}
+		// 正在等待用户输入时，继续走下面的 switch 处理输入
 	}
 
 	switch msg.String() {
@@ -506,6 +517,19 @@ func (m *TuiViewModel) handleSubmit() (tea.Model, tea.Cmd) {
 			m.refreshLogsViewportContent()
 			return m, nil
 		}
+	}
+
+	// 如果编排器正在等待用户输入，将输入提交给编排器
+	if m.state == stateOrchestrating && m.orchestratorPendingInput {
+		if m.orchestrator != nil {
+			m.logs = append(m.logs, NewContent(query))
+			m.orchestrator.SubmitUserInput(query)
+			m.input = ""
+			m.cursorPos = 0
+			m.orchestratorPendingInput = false
+			m.refreshLogsViewportContent()
+		}
+		return m, waitOrchestratorUpdate(m.orchestratorUpdateCh)
 	}
 
 	if m.state != stateIdle {
@@ -957,7 +981,8 @@ func (m *TuiViewModel) startOrchestration(query string) (tea.Model, tea.Cmd) {
 	m.orchestratorState = orchestrator.StatePlanning
 	m.orchestratorScores = make(map[orchestrator.OrchestrationState]*orchestrator.ReviewScore)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.orchestratorCancel = cancel
 	m.orchestratorUpdateCh = m.orchestrator.ExecuteAsync(ctx, query)
 
 	return m, tea.Batch(
@@ -987,6 +1012,11 @@ func (m *TuiViewModel) handleOrchestratorUpdate(msg orchestratorUpdateMsg) (tea.
 	}
 	if update.PhaseLog != "" {
 		m.logs = append(m.logs, NewNotice(fmt.Sprintf("[编排] %s: %s", update.State, update.PhaseLog)))
+	}
+	if update.NeedsUserInput {
+		m.orchestratorPendingInput = true
+		m.orchestratorQuestion = update.Question
+		m.logs = append(m.logs, NewNotice("编排器等待您的输入..."))
 	}
 	m.refreshLogsViewportContent()
 
@@ -1318,8 +1348,26 @@ func (m *TuiViewModel) View() tea.View {
 	if m.state == stateOrchestrating {
 		b.WriteString(RenderOrchestratorState(m.orchestratorState, m.orchestratorScores))
 		b.WriteString("\n")
-		b.WriteString(footerStyle.Render("编排运行中，Ctrl+C / Esc 取消，输入暂不可用。"))
-		b.WriteString("\n")
+		if m.orchestratorPendingInput {
+			b.WriteString(noticeStyle.Render(m.orchestratorQuestion))
+			b.WriteString("\n")
+			// 渲染带光标的输入行
+			runes := []rune(m.input)
+			if m.cursorPos > len(runes) {
+				m.cursorPos = len(runes)
+			}
+			before := string(runes[:m.cursorPos])
+			after := string(runes[m.cursorPos:])
+			b.WriteString(contentStyle.Render(">>> " + before))
+			b.WriteString(cursorStyle.Render(" ")) // 光标
+			b.WriteString(contentStyle.Render(after))
+			b.WriteString("\n")
+			b.WriteString(footerStyle.Render("Enter 提交回复  |  Ctrl+C / Esc 取消编排"))
+			b.WriteString("\n")
+		} else {
+			b.WriteString(footerStyle.Render("编排运行中，Ctrl+C / Esc 取消，输入暂不可用。"))
+			b.WriteString("\n")
+		}
 	} else if m.state == stateSubagentRunning {
 		b.WriteString(footerStyle.Render("子代理运行中，Ctrl+C 终止，输入暂不可用。"))
 		b.WriteString("\n")

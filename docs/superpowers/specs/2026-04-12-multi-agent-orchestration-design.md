@@ -106,8 +106,12 @@ pending → planning → plan_reviewing → planning (打回重做)
                            ↓ 通过
                         coding → code_reviewing → coding (打回重做)
                                           ↓ 通过
-                                     final_review → done
+                                     final_review → planning (不合格，回退到计划阶段)
+                                          ↓ 通过
+                                          done
 ```
+
+**特殊流转**：TaskReviewer 不合格时，不是在 Code 阶段重试，而是**回退到 Planning 阶段重新开始**，因为问题可能在计划层面。
 
 ### 6.2 状态说明
 
