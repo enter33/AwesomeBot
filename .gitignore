@@ -45,3 +45,4 @@ memory/
 .claude
 
 .atlas.worktrees/
+.worktrees/
