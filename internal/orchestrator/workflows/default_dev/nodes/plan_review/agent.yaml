@@ -1,0 +1,13 @@
+name: planner_reviewer
+description: 审查执行计划
+execution_mode: subagent
+subagent_type: plan
+prompt_file: prompt.txt
+input_template: |
+  用户需求:
+  {{.UserRequest}}
+
+  计划:
+  {{.PreviousOutput}}
+output_format: review_score
+retry_limit: 3

@@ -1,0 +1,13 @@
+name: final_reviewer
+description: 最终任务验收
+execution_mode: subagent
+subagent_type: plan
+prompt_file: prompt.txt
+input_template: |
+  用户需求:
+  {{.UserRequest}}
+
+  最终结果:
+  {{.PreviousOutput}}
+output_format: review_score
+retry_limit: 3

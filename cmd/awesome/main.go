@@ -235,6 +235,7 @@ func main() {
 	orch := orchestrator.NewOrchestrator(
 		awesomeConfig.MultiAgent,
 		subagentManager,
+		codingAgent,
 	)
 
 	// 创建 TUI

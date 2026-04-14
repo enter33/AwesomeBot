@@ -52,6 +52,14 @@ type orchestratorDoneMsg struct {
 	err error
 }
 
+// mainAgentStreamMsg 编排器中主 agent 节点的流消息
+type mainAgentStreamMsg struct {
+	event agent.MessageVO
+}
+
+// mainAgentStreamClosedMsg 主 agent 流 channel 关闭
+type mainAgentStreamClosedMsg struct{}
+
 type runState int
 
 const (
@@ -132,13 +140,15 @@ type TuiViewModel struct {
 	subagentOutputs map[string]*subagentOutput // 子代理输出缓冲区
 
 	// Orchestrator 相关
-	orchestrator       *orchestrator.Orchestrator
-	orchestratorState  orchestrator.OrchestrationState
-	orchestratorScores map[orchestrator.OrchestrationState]*orchestrator.ReviewScore
+	orchestrator             *orchestrator.Orchestrator
+	orchestratorState        orchestrator.OrchestrationState
 	orchestratorUpdateCh     <-chan orchestrator.OrchestratorUpdate
 	orchestratorPendingInput bool
 	orchestratorQuestion     string
 	orchestratorCancel       context.CancelFunc
+
+	// 编排器中 main_agent 节点的流 channel
+	mainAgentStreamCh chan agent.MessageVO
 
 	// 日志自动清理相关
 	maxLogEntries int // 最大日志条目数，0 表示不限制
@@ -197,7 +207,6 @@ func (m *TuiViewModel) Init() tea.Cmd {
 // SetOrchestrator 设置编排器
 func (m *TuiViewModel) SetOrchestrator(orch *orchestrator.Orchestrator) {
 	m.orchestrator = orch
-	m.orchestratorScores = make(map[orchestrator.OrchestrationState]*orchestrator.ReviewScore)
 }
 
 func waitStreamEvent(ch <-chan agent.MessageVO) tea.Cmd {
@@ -264,6 +273,18 @@ func (m *TuiViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleOrchestratorUpdate(msg)
 	case orchestratorDoneMsg:
 		return m.handleOrchestratorDone(msg)
+	case mainAgentStreamMsg:
+		m.handleStreamEvent(msg.event)
+		m.refreshLogsViewportContent()
+		return m, waitMainAgentStream(m.mainAgentStreamCh)
+	case mainAgentStreamClosedMsg:
+		if m.active != nil {
+			m.active.reasonBody = -1
+			m.active.contentBody = -1
+			m.active.policyBody = -1
+			m.active.memoryBody = -1
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -285,6 +306,10 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.stopAllSubagents()
 			if m.orchestratorCancel != nil {
 				m.orchestratorCancel()
+			}
+			if m.mainAgentStreamCh != nil {
+				close(m.mainAgentStreamCh)
+				m.mainAgentStreamCh = nil
 			}
 			m.state = stateIdle
 			m.orchestratorPendingInput = false
@@ -369,24 +394,24 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.abortCurrentTurn()
 		return m, nil
 	case "backspace":
-		if m.state == stateIdle {
+		if m.state == stateIdle || (m.state == stateOrchestrating && m.orchestratorPendingInput) {
 			m.deleteCharBeforeCursor()
 		}
 		return m, nil
 	case "ctrl+u": // 清空整行
-		if m.state == stateIdle {
+		if m.state == stateIdle || (m.state == stateOrchestrating && m.orchestratorPendingInput) {
 			m.input = ""
 			m.cursorPos = 0
 			m.historyIndex = -1
 		}
 		return m, nil
 	case "ctrl+w": // 清空光标前一个词
-		if m.state == stateIdle {
+		if m.state == stateIdle || (m.state == stateOrchestrating && m.orchestratorPendingInput) {
 			m.deleteWordBeforeCursor()
 		}
 		return m, nil
 	case "left":
-		if m.state == stateIdle {
+		if m.state == stateIdle || (m.state == stateOrchestrating && m.orchestratorPendingInput) {
 			// 优先移动光标
 			if m.cursorPos > 0 {
 				m.cursorPos--
@@ -399,7 +424,7 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "right":
-		if m.state == stateIdle {
+		if m.state == stateIdle || (m.state == stateOrchestrating && m.orchestratorPendingInput) {
 			// 优先移动光标
 			if m.cursorPos < len(m.input) {
 				m.cursorPos++
@@ -413,7 +438,7 @@ func (m *TuiViewModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.state != stateIdle {
+	if m.state != stateIdle && !(m.state == stateOrchestrating && m.orchestratorPendingInput) {
 		return m, nil
 	}
 
@@ -979,15 +1004,27 @@ func (m *TuiViewModel) startOrchestration(query string) (tea.Model, tea.Cmd) {
 
 	m.state = stateOrchestrating
 	m.orchestratorState = orchestrator.StatePlanning
-	m.orchestratorScores = make(map[orchestrator.OrchestrationState]*orchestrator.ReviewScore)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.orchestratorCancel = cancel
+
+	m.mainAgentStreamCh = make(chan agent.MessageVO, 10)
+	m.orchestrator.SetMainAgentViewCh(m.mainAgentStreamCh)
+
+	m.active = &activeStream{
+		turnLogLen:  len(m.logs),
+		reasonBody:  -1,
+		contentBody: -1,
+		policyBody:  -1,
+		memoryBody:  -1,
+	}
+
 	m.orchestratorUpdateCh = m.orchestrator.ExecuteAsync(ctx, query)
 
 	return m, tea.Batch(
 		m.startSubagentListener(),
 		waitOrchestratorUpdate(m.orchestratorUpdateCh),
+		waitMainAgentStream(m.mainAgentStreamCh),
 	)
 }
 
@@ -1004,12 +1041,19 @@ func waitOrchestratorUpdate(ch <-chan orchestrator.OrchestratorUpdate) tea.Cmd {
 	}
 }
 
+func waitMainAgentStream(ch <-chan agent.MessageVO) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return mainAgentStreamClosedMsg{}
+		}
+		return mainAgentStreamMsg{event: msg}
+	}
+}
+
 func (m *TuiViewModel) handleOrchestratorUpdate(msg orchestratorUpdateMsg) (tea.Model, tea.Cmd) {
 	update := msg.update
 	m.orchestratorState = update.State
-	if update.Score != nil {
-		m.orchestratorScores[update.State] = update.Score
-	}
 	if update.PhaseLog != "" {
 		m.logs = append(m.logs, NewNotice(fmt.Sprintf("[编排] %s: %s", update.State, update.PhaseLog)))
 	}
@@ -1033,6 +1077,11 @@ func (m *TuiViewModel) handleOrchestratorDone(msg orchestratorDoneMsg) (tea.Mode
 	m.logs = append(m.logs, NewBorder())
 	m.refreshLogsViewportContent()
 	m.cleanupLogs()
+	m.stopActiveStream()
+	if m.mainAgentStreamCh != nil {
+		close(m.mainAgentStreamCh)
+		m.mainAgentStreamCh = nil
+	}
 	return m, nil
 }
 
@@ -1199,6 +1248,9 @@ func (m *TuiViewModel) logsFooterHeight() int {
 	}
 	if m.state == stateOrchestrating {
 		h++ // 额外一行显示编排状态条
+		if m.orchestratorPendingInput {
+			h += 2 // question 行 + 提交提示行
+		}
 	}
 	if m.notice != "" {
 		h++
@@ -1346,8 +1398,6 @@ func (m *TuiViewModel) View() tea.View {
 
 	b.WriteString("\n")
 	if m.state == stateOrchestrating {
-		b.WriteString(RenderOrchestratorState(m.orchestratorState, m.orchestratorScores))
-		b.WriteString("\n")
 		if m.orchestratorPendingInput {
 			b.WriteString(noticeStyle.Render(m.orchestratorQuestion))
 			b.WriteString("\n")

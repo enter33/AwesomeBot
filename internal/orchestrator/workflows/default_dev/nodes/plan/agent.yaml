@@ -1,0 +1,15 @@
+name: planner
+description: 制定执行计划
+execution_mode: main_agent
+subagent_type: plan
+prompt_file: prompt.txt
+input_template: |
+  用户需求:
+  {{.UserRequest}}
+  {{if .LastReviewComments}}
+
+  【上次审查意见（请针对以下问题改进计划）】
+  {{.LastReviewComments}}
+  {{end}}
+output_format: text
+retry_limit: 3

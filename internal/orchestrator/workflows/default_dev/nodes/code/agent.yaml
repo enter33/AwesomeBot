@@ -1,0 +1,18 @@
+name: coder
+description: 执行代码编写
+execution_mode: subagent
+subagent_type: general-purpose
+prompt_file: prompt.txt
+input_template: |
+  用户需求:
+  {{.UserRequest}}
+
+  执行计划:
+  {{.PreviousOutput}}
+  {{if .LastReviewComments}}
+
+  【上次审查意见（请针对以下问题改进代码）】
+  {{.LastReviewComments}}
+  {{end}}
+output_format: text
+retry_limit: 3

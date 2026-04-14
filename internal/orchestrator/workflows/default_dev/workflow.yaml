@@ -1,0 +1,22 @@
+id: default_dev
+name: 默认开发工作流
+description: 适用于一般软件开发任务
+entry_node: plan
+nodes:
+  - plan
+  - plan_review
+  - code
+  - code_review
+  - final_review
+default_transitions:
+  plan: plan_review
+  plan_review: code
+  code: code_review
+  code_review: final_review
+  final_review: done
+router:
+  enabled: true
+  trigger_after:
+    - plan_review
+    - code_review
+    - final_review

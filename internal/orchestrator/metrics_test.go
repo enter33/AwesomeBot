@@ -66,13 +66,8 @@ func TestComplexityDetectorThreshold1(t *testing.T) {
 }
 
 func TestParseReviewScore(t *testing.T) {
-	o := NewOrchestrator(config.MultiAgentConfig{}, nil)
-
 	output := "总分: 85/100\n通过与否: 是\n质疑点: 无"
-	score, err := o.parseReviewScore(output, PlanReviewerDimensions, 70)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	score := parseReviewScore(output)
 	if score.TotalScore != 85 {
 		t.Errorf("expected score 85, got %f", score.TotalScore)
 	}
@@ -82,10 +77,7 @@ func TestParseReviewScore(t *testing.T) {
 
 	// 测试不及格
 	output2 := "总分: 60/100\n通过与否: 否"
-	score2, err := o.parseReviewScore(output2, PlanReviewerDimensions, 70)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	score2 := parseReviewScore(output2)
 	if score2.Passed {
 		t.Error("expected passed=false")
 	}
@@ -94,14 +86,14 @@ func TestParseReviewScore(t *testing.T) {
 func TestShouldOrchestrate(t *testing.T) {
 	// enabled=true 时总是编排
 	cfg := config.MultiAgentConfig{Enabled: true, ComplexityThreshold: 2}
-	o := NewOrchestrator(cfg, nil)
+	o := NewOrchestrator(cfg, nil, nil)
 	if !o.ShouldOrchestrate("简单请求") {
 		t.Error("expected ShouldOrchestrate=true when enabled")
 	}
 
 	// enabled=false 时按复杂度判断
 	cfg2 := config.MultiAgentConfig{Enabled: false, ComplexityThreshold: 2}
-	o2 := NewOrchestrator(cfg2, nil)
+	o2 := NewOrchestrator(cfg2, nil, nil)
 	if o2.ShouldOrchestrate("读取文件") {
 		t.Error("expected ShouldOrchestrate=false for simple task")
 	}
